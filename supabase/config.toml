@@ -5,3 +5,6 @@ verify_jwt = true
 
 [functions.clarify-person]
 verify_jwt = true
+
+[functions.parse-legal-document]
+verify_jwt = true
