@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { generatePersonAnalysis, clarifyPerson } from '../services/ai';
-import { Person, Role, ProfileNote, Conversation, Issue, Event, ClarificationQuestion, SuggestedRelationship, PersonRelationship } from '../types';
+import { Person, Role, ProfileNote, Conversation, Issue, Event, ConversationTurn, SuggestedRelationship, PersonRelationship } from '../types';
 import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon } from 'lucide-react';
 import { ClarificationModal } from './ClarificationModal';
 
@@ -19,13 +19,14 @@ export const PeopleList: React.FC = () => {
   const [newDescription, setNewDescription] = useState('');
   const [creating, setCreating] = useState(false);
 
-  // Clarification State
+  // Iterative Clarification State
   const [showClarification, setShowClarification] = useState(false);
-  const [clarificationData, setClarificationData] = useState<{
-    questions: ClarificationQuestion[];
-    suggestedRelationships: SuggestedRelationship[];
-    enrichedContext: string;
-  } | null>(null);
+  const [conversationHistory, setConversationHistory] = useState<ConversationTurn[]>([]);
+  const [currentQuestion, setCurrentQuestion] = useState<string | undefined>();
+  const [currentUnderstanding, setCurrentUnderstanding] = useState<string | undefined>();
+  const [enrichedContext, setEnrichedContext] = useState<string | undefined>();
+  const [suggestedRelationships, setSuggestedRelationships] = useState<SuggestedRelationship[]>([]);
+  const [isComplete, setIsComplete] = useState(false);
   const [clarifying, setClarifying] = useState(false);
 
   useEffect(() => {
@@ -42,14 +43,15 @@ export const PeopleList: React.FC = () => {
     setClarifying(true);
     
     try {
-      // Call AI to analyze the person and get clarification questions
-      const result = await clarifyPerson(newRole, newName, newDescription, people);
+      // Call AI to analyze the person (first round)
+      const result = await clarifyPerson(newRole, newName, newDescription, people, []);
       
-      setClarificationData({
-        questions: result.questions,
-        suggestedRelationships: result.suggestedRelationships,
-        enrichedContext: result.enrichedContext || newDescription
-      });
+      setCurrentQuestion(result.question);
+      setCurrentUnderstanding(result.currentUnderstanding);
+      setEnrichedContext(result.enrichedContext);
+      setSuggestedRelationships(result.suggestedRelationships);
+      setIsComplete(result.complete);
+      setConversationHistory([]);
       setShowClarification(true);
     } catch (err) {
       console.error('Clarification error:', err);
@@ -60,20 +62,36 @@ export const PeopleList: React.FC = () => {
     }
   };
 
-  const handleClarificationConfirm = async (
-    answers: Record<string, string>,
-    confirmedRelationships: SuggestedRelationship[]
-  ) => {
+  const handleClarificationContinue = async (answer: string) => {
+    if (!currentQuestion) return;
+    
+    setClarifying(true);
+    
+    try {
+      // Add the current Q&A to history
+      const newHistory = [...conversationHistory, { question: currentQuestion, answer }];
+      setConversationHistory(newHistory);
+      
+      // Call AI with updated conversation history
+      const result = await clarifyPerson(newRole, newName, newDescription, people, newHistory);
+      
+      setCurrentQuestion(result.question);
+      setCurrentUnderstanding(result.currentUnderstanding);
+      setEnrichedContext(result.enrichedContext);
+      setSuggestedRelationships(result.suggestedRelationships);
+      setIsComplete(result.complete);
+    } catch (err) {
+      console.error('Clarification continue error:', err);
+    } finally {
+      setClarifying(false);
+    }
+  };
+
+  const handleClarificationConfirm = async (confirmedRelationships: SuggestedRelationship[]) => {
     setCreating(true);
     
     try {
-      let finalContext = clarificationData?.enrichedContext || newDescription;
-      
-      // If there were questions answered, re-run clarification to get updated context
-      if (Object.keys(answers).length > 0) {
-        const result = await clarifyPerson(newRole, newName, newDescription, people, answers);
-        finalContext = result.enrichedContext || finalContext;
-      }
+      const finalContext = enrichedContext || currentUnderstanding || newDescription;
       
       // Create the person
       const createdPerson = await api.createPerson({
@@ -103,6 +121,11 @@ export const PeopleList: React.FC = () => {
     }
   };
 
+  const handleSkipClarification = async () => {
+    // Create person with whatever context we have
+    await handleClarificationConfirm(suggestedRelationships);
+  };
+
   const createPersonDirectly = async (context: string) => {
     try {
       await api.createPerson({
@@ -121,7 +144,12 @@ export const PeopleList: React.FC = () => {
   const resetForm = () => {
     setIsModalOpen(false);
     setShowClarification(false);
-    setClarificationData(null);
+    setConversationHistory([]);
+    setCurrentQuestion(undefined);
+    setCurrentUnderstanding(undefined);
+    setEnrichedContext(undefined);
+    setSuggestedRelationships([]);
+    setIsComplete(false);
     setNewName('');
     setNewEmail('');
     setNewDescription('');
@@ -241,15 +269,20 @@ export const PeopleList: React.FC = () => {
       )}
 
       {/* Clarification Modal */}
-      {showClarification && clarificationData && (
+      {showClarification && (
         <ClarificationModal
           personName={newName}
-          questions={clarificationData.questions}
-          suggestedRelationships={clarificationData.suggestedRelationships}
-          enrichedContext={clarificationData.enrichedContext}
+          conversationHistory={conversationHistory}
+          currentQuestion={currentQuestion}
+          currentUnderstanding={currentUnderstanding}
+          enrichedContext={enrichedContext}
+          suggestedRelationships={suggestedRelationships}
+          isComplete={isComplete}
+          isProcessing={clarifying || creating}
+          onContinue={handleClarificationContinue}
           onConfirm={handleClarificationConfirm}
           onCancel={resetForm}
-          isProcessing={creating}
+          onSkip={handleSkipClarification}
         />
       )}
     </div>
@@ -262,6 +295,7 @@ export const PersonDetail: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [notes, setNotes] = useState<ProfileNote[]>([]);
   const [involvedIssues, setInvolvedIssues] = useState<Issue[]>([]);
+  const [relationships, setRelationships] = useState<(PersonRelationship & { relatedPerson?: Person })[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'analysis'>('overview');
   
@@ -280,16 +314,25 @@ export const PersonDetail: React.FC = () => {
   const loadData = async () => {
     if (!id) return;
     try {
-      const [p, allConv, n, allIssues, allEvents] = await Promise.all([
+      const [p, allConv, n, allIssues, allEvents, allPeople, rels] = await Promise.all([
         api.getPerson(id),
         api.getConversations(),
         api.getProfileNotes(id),
         api.getIssues(),
-        api.getEvents()
+        api.getEvents(),
+        api.getPeople(),
+        api.getPersonRelationships(id)
       ]);
       setPerson(p);
       setConversations(allConv.filter(c => c.participantIds.includes(id)));
       setNotes(n);
+      
+      // Enrich relationships with person data
+      const enrichedRels = rels.map(rel => ({
+        ...rel,
+        relatedPerson: allPeople.find(person => person.id === rel.relatedPersonId)
+      }));
+      setRelationships(enrichedRels);
       
       // Calculate involved issues
       const issueIds = new Set<string>();
@@ -443,7 +486,7 @@ export const PersonDetail: React.FC = () => {
             </div>
 
              <div className="space-y-4">
-              <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+               <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4" /> Involved Issues
               </h3>
               <div className="bg-white rounded-lg border border-slate-200 p-4">
@@ -459,6 +502,46 @@ export const PersonDetail: React.FC = () => {
                      </Link>
                    ))}
                 </div>
+              </div>
+            </div>
+
+            {/* Relationships Section */}
+            <div className="space-y-4 lg:col-span-2">
+              <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                <LinkIcon className="w-4 h-4" /> Relationships
+              </h3>
+              <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {relationships.length === 0 ? (
+                  <div className="p-4 text-slate-500 text-sm">No relationships defined.</div>
+                ) : (
+                  relationships.map(rel => (
+                    <Link 
+                      to={`/people/${rel.relatedPersonId}`} 
+                      key={rel.id} 
+                      className="block p-4 hover:bg-slate-50"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <span className="font-medium text-slate-800">
+                            {rel.relatedPerson?.fullName || 'Unknown'}
+                          </span>
+                          <span className="text-slate-400 mx-2">•</span>
+                          <span className="text-sm text-indigo-600 capitalize">
+                            {rel.relationshipType.replace(/_/g, ' ')}
+                          </span>
+                        </div>
+                        {rel.relatedPerson && (
+                          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
+                            {rel.relatedPerson.role}
+                          </span>
+                        )}
+                      </div>
+                      {rel.description && (
+                        <p className="text-sm text-slate-500 mt-1">{rel.description}</p>
+                      )}
+                    </Link>
+                  ))
+                )}
               </div>
             </div>
           </div>

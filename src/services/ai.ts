@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { api } from './api';
-import { AssistantSenderType, MessageDirection, Role, Person, ClarificationResult } from '../types';
+import { AssistantSenderType, MessageDirection, Role, Person, ClarificationResult, ConversationTurn } from '../types';
 import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
 
 // Re-export the parser types for external use
@@ -296,14 +296,14 @@ export async function processStream(
 }
 
 /**
- * Clarify a person's role and relationships using AI
+ * Clarify a person's role and relationships using AI (iterative free-text mode)
  */
 export async function clarifyPerson(
   role: Role,
   fullName: string,
   description: string,
   existingPeople: Person[],
-  answers?: Record<string, string>
+  conversationHistory: ConversationTurn[] = []
 ): Promise<ClarificationResult> {
   const { data, error } = await supabase.functions.invoke('clarify-person', {
     body: {
@@ -313,9 +313,10 @@ export async function clarifyPerson(
       existingPeople: existingPeople.map(p => ({
         id: p.id,
         fullName: p.fullName,
-        role: p.role
+        role: p.role,
+        roleContext: p.roleContext
       })),
-      answers
+      conversationHistory
     }
   });
 
@@ -325,8 +326,10 @@ export async function clarifyPerson(
   }
 
   return {
-    questions: data.questions || [],
-    suggestedRelationships: data.suggestedRelationships || [],
-    enrichedContext: data.enrichedContext || description
+    complete: data.complete ?? false,
+    question: data.question,
+    currentUnderstanding: data.currentUnderstanding,
+    enrichedContext: data.enrichedContext,
+    suggestedRelationships: data.suggestedRelationships || []
   };
 }
