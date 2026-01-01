@@ -45,6 +45,8 @@ Provide a clinical assessment including:
 3. Recommended strategies for interaction
 4. Key issues to monitor or document
 
+Consider the person's role context (their description and purpose in the family system) when analyzing.
+
 Be direct and specific. Cite evidence from the provided data. Structure your response as JSON:
 {
   "assessment": "Clinical summary paragraph",

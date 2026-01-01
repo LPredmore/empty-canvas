@@ -1,12 +1,11 @@
 export enum Role {
-  Me = 'me',
-  Parent = 'parent',
-  Child = 'child',
-  StepParent = 'step_parent',
-  Therapist = 'therapist',
-  Lawyer = 'lawyer',
-  Judge = 'judge',
-  Other = 'other'
+  Me = 'Me',
+  Parent = 'Parent',
+  Child = 'Child',
+  StepParent = 'Step-Parent',
+  Clinician = 'Clinician',
+  Legal = 'Legal',
+  Other = 'Other'
 }
 
 export enum SourceType {
@@ -56,11 +55,11 @@ export interface PersonRelationship {
   description?: string;
 }
 
-export interface ClarificationQuestion {
-  id: string;
+// --- Clarification Types (Iterative Free-Text) ---
+
+export interface ConversationTurn {
   question: string;
-  type: 'select' | 'text';
-  options?: string[];
+  answer: string;
 }
 
 export interface SuggestedRelationship {
@@ -71,9 +70,11 @@ export interface SuggestedRelationship {
 }
 
 export interface ClarificationResult {
-  questions: ClarificationQuestion[];
-  suggestedRelationships: SuggestedRelationship[];
+  complete: boolean;
+  question?: string;
+  currentUnderstanding?: string;
   enrichedContext?: string;
+  suggestedRelationships: SuggestedRelationship[];
 }
 
 export interface Conversation {
