@@ -1,9 +1,9 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../lib/supabase';
 import { 
   Person, Conversation, Message, Issue, Event, ProfileNote, 
   LegalDocument, LegalClause, Agreement, AgreementItem,
   AssistantSession, AssistantMessage, AssistantSenderType
-} from '@/types';
+} from '../types';
 
 // --- SYSTEM INSTRUCTIONS ---
 export const COPARENTING_ASSISTANT_INSTRUCTIONS = `
@@ -761,25 +761,4 @@ export const api = {
       };
   },
 
-  // --- AI Chat (calls Edge Function) ---
-  chatWithAssistant: async (sessionId: string, userContent: string, file?: File): Promise<any> => {
-    // Save user message first
-    await api.saveAssistantMessage(sessionId, AssistantSenderType.User, userContent);
-    
-    // Call the edge function
-    const { data, error } = await supabase.functions.invoke('chat-assistant', {
-      body: { sessionId, userContent }
-    });
-    
-    if (error) {
-      throw new Error(error.message || 'Failed to get AI response');
-    }
-    
-    // Save assistant response
-    if (data?.response_text) {
-      await api.saveAssistantMessage(sessionId, AssistantSenderType.Assistant, data.response_text);
-    }
-    
-    return data;
-  }
 };

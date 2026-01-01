@@ -1,4 +1,4 @@
-import { MessageDirection } from '@/types';
+import { MessageDirection } from '../types';
 
 export interface ParsedMessage {
   senderName: string;

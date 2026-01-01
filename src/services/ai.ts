@@ -1,7 +1,7 @@
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../lib/supabase';
 import { api } from './api';
-import { AssistantSenderType, MessageDirection } from '@/types';
-import type { ParsedConversation, ParsedMessage } from '@/utils/parsers';
+import { AssistantSenderType, MessageDirection } from '../types';
+import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
 
 // Re-export the parser types for external use
 export type { ParsedConversation, ParsedMessage };
