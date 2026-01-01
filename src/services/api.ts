@@ -184,7 +184,7 @@ export const api = {
   // --- Conversations ---
   getConversations: async (): Promise<Conversation[]> => {
     const data = await handleResponse(
-      supabase.from('conversations').select('*, conversation_participants(person_id)').order('updated_at', { ascending: false })
+      supabase.from('conversations').select('*, conversation_participants(person_id)').order('started_at', { ascending: false })
     );
 
     return Array.isArray(data) ? data.map((c: any) => ({
@@ -192,6 +192,7 @@ export const api = {
       title: c.title,
       sourceType: c.source_type,
       startedAt: c.started_at,
+      endedAt: c.ended_at,
       updatedAt: c.updated_at,
       previewText: c.preview_text || '',
       participantIds: c.conversation_participants?.map((cp: any) => cp.person_id) || []
@@ -211,6 +212,7 @@ export const api = {
       title: data.title,
       sourceType: data.source_type,
       startedAt: data.started_at,
+      endedAt: data.ended_at,
       updatedAt: data.updated_at,
       previewText: data.preview_text || '',
       participantIds: data.conversation_participants?.map((cp: any) => cp.person_id) || []
@@ -270,6 +272,7 @@ export const api = {
       title: conversation.title,
       source_type: conversation.sourceType,
       started_at: conversation.startedAt,
+      ended_at: conversation.endedAt,
       preview_text: conversation.previewText
     }).select().single();
 
@@ -286,6 +289,7 @@ export const api = {
     const messagesPayload = messages.map(m => ({
       conversation_id: convData.id,
       sender_id: m.senderId,
+      receiver_id: m.receiverId,
       raw_text: m.rawText,
       direction: m.direction,
       sent_at: m.sentAt
@@ -300,6 +304,7 @@ export const api = {
       title: convData.title,
       sourceType: convData.source_type,
       startedAt: convData.started_at,
+      endedAt: convData.ended_at,
       updatedAt: convData.updated_at,
       previewText: convData.preview_text || '',
       participantIds: participantIds
@@ -313,6 +318,7 @@ export const api = {
       const messagesPayload = messages.map(m => ({
         conversation_id: conversationId,
         sender_id: m.senderId,
+        receiver_id: m.receiverId,
         raw_text: m.rawText,
         direction: m.direction,
         sent_at: m.sentAt
@@ -322,7 +328,17 @@ export const api = {
         await supabase.from('messages').insert(messagesPayload);
       }
       
-      await supabase.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversationId);
+      // Find the latest message date from the batch being added
+      const latestDate = messages.reduce((max, m) => {
+        if (!m.sentAt) return max;
+        const d = new Date(m.sentAt);
+        return d > max ? d : max;
+      }, new Date(0));
+      
+      await supabase.from('conversations').update({ 
+        updated_at: new Date().toISOString(),
+        ended_at: latestDate.toISOString()
+      }).eq('id', conversationId);
   },
 
   // --- Messages ---
@@ -337,6 +353,7 @@ export const api = {
       id: m.id,
       conversationId: m.conversation_id,
       senderId: m.sender_id,
+      receiverId: m.receiver_id,
       sentAt: m.sent_at,
       rawText: m.raw_text,
       direction: m.direction,

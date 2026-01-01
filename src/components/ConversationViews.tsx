@@ -2,8 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { Conversation, Message, Person, MessageDirection, Issue } from '../types';
-import { format } from 'date-fns';
+import { format, isSameDay, isSameMonth, isSameYear } from 'date-fns';
 import { Search, Filter, Paperclip, Send, Loader2, Tag, Plus, AlertCircle } from 'lucide-react';
+
+const formatDateRange = (startedAt?: string, endedAt?: string): string => {
+  if (!startedAt) return '';
+  const start = new Date(startedAt);
+  const end = endedAt ? new Date(endedAt) : start;
+  
+  if (isSameDay(start, end)) {
+    return format(start, 'MMM d');
+  }
+  
+  if (isSameMonth(start, end) && isSameYear(start, end)) {
+    return `${format(start, 'MMM d')} – ${format(end, 'd')}`;
+  }
+  
+  if (isSameYear(start, end)) {
+    return `${format(start, 'MMM d')} – ${format(end, 'MMM d')}`;
+  }
+  
+  return `${format(start, 'MMM d, yyyy')} – ${format(end, 'MMM d, yyyy')}`;
+};
 
 export const ConversationList: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -48,7 +68,7 @@ export const ConversationList: React.FC = () => {
             <Link to={`/conversations/${conv.id}`} key={conv.id} className="block p-5 hover:bg-slate-50 transition-colors">
               <div className="flex justify-between items-start mb-1">
                 <h3 className="font-semibold text-slate-900">{conv.title}</h3>
-                <span className="text-xs text-slate-500">{conv.updatedAt ? format(new Date(conv.updatedAt), 'MMM d') : ''}</span>
+                <span className="text-xs text-slate-500">{formatDateRange(conv.startedAt, conv.endedAt)}</span>
               </div>
               <p className="text-sm text-slate-500 line-clamp-1 mb-2">{conv.previewText}</p>
               <div className="flex items-center gap-2">

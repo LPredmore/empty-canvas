@@ -50,6 +50,7 @@ export interface Conversation {
   title: string;
   sourceType: SourceType;
   startedAt: string;
+  endedAt?: string;
   updatedAt: string;
   participantIds: string[];
   previewText: string;
@@ -59,6 +60,7 @@ export interface Message {
   id: string;
   conversationId: string;
   senderId: string;
+  receiverId?: string;
   sentAt: string;
   rawText: string;
   direction: MessageDirection;

@@ -241,6 +241,7 @@ export type Database = {
       }
       conversations: {
         Row: {
+          ended_at: string | null
           id: string
           preview_text: string | null
           source_type: string
@@ -250,6 +251,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          ended_at?: string | null
           id?: string
           preview_text?: string | null
           source_type: string
@@ -259,6 +261,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          ended_at?: string | null
           id?: string
           preview_text?: string | null
           source_type?: string
@@ -518,6 +521,7 @@ export type Database = {
           direction: string
           id: string
           raw_text: string | null
+          receiver_id: string | null
           sender_id: string | null
           sent_at: string | null
           user_id: string | null
@@ -527,6 +531,7 @@ export type Database = {
           direction: string
           id?: string
           raw_text?: string | null
+          receiver_id?: string | null
           sender_id?: string | null
           sent_at?: string | null
           user_id?: string | null
@@ -536,6 +541,7 @@ export type Database = {
           direction?: string
           id?: string
           raw_text?: string | null
+          receiver_id?: string | null
           sender_id?: string | null
           sent_at?: string | null
           user_id?: string | null
@@ -546,6 +552,13 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_receiver_id_fkey"
+            columns: ["receiver_id"]
+            isOneToOne: false
+            referencedRelation: "people"
             referencedColumns: ["id"]
           },
           {
