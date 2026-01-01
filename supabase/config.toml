@@ -2,3 +2,6 @@ project_id = "nukdhsxnaonzsskmchov"
 
 [functions.chat-assistant]
 verify_jwt = true
+
+[functions.clarify-person]
+verify_jwt = true

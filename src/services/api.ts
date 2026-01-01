@@ -2,7 +2,8 @@ import { supabase } from '../lib/supabase';
 import { 
   Person, Conversation, Message, Issue, Event, ProfileNote, 
   LegalDocument, LegalClause, Agreement, AgreementItem,
-  AssistantSession, AssistantMessage, AssistantSenderType
+  AssistantSession, AssistantMessage, AssistantSenderType,
+  PersonRelationship
 } from '../types';
 
 // --- SYSTEM INSTRUCTIONS ---
@@ -64,7 +65,8 @@ export const api = {
       email: p.email,
       phone: p.phone,
       avatarUrl: p.avatar_url,
-      notes: p.notes
+      notes: p.notes,
+      roleContext: p.role_context
     })) : [];
   },
 
@@ -78,7 +80,8 @@ export const api = {
       email: data.email,
       phone: data.phone,
       avatarUrl: data.avatar_url,
-      notes: data.notes
+      notes: data.notes,
+      roleContext: data.role_context
     };
   },
 
@@ -89,7 +92,8 @@ export const api = {
       email: person.email,
       phone: person.phone,
       avatar_url: person.avatarUrl,
-      notes: person.notes
+      notes: person.notes,
+      role_context: person.roleContext
     }).select().single();
     
     if (error) throw error;
@@ -100,7 +104,8 @@ export const api = {
       email: data.email,
       phone: data.phone,
       avatarUrl: data.avatar_url,
-      notes: data.notes
+      notes: data.notes,
+      roleContext: data.role_context
     };
   },
 
@@ -112,6 +117,7 @@ export const api = {
     if (updates.phone) dbUpdates.phone = updates.phone;
     if (updates.avatarUrl) dbUpdates.avatar_url = updates.avatarUrl;
     if (updates.notes) dbUpdates.notes = updates.notes;
+    if (updates.roleContext !== undefined) dbUpdates.role_context = updates.roleContext;
 
     const { data, error } = await supabase.from('people').update(dbUpdates).eq('id', id).select().single();
     
@@ -123,8 +129,43 @@ export const api = {
       email: data.email,
       phone: data.phone,
       avatarUrl: data.avatar_url,
-      notes: data.notes
+      notes: data.notes,
+      roleContext: data.role_context
     };
+  },
+
+  // --- Person Relationships ---
+  createPersonRelationship: async (relationship: Omit<PersonRelationship, 'id'>): Promise<PersonRelationship> => {
+    const { data, error } = await supabase.from('person_relationships').insert({
+      person_id: relationship.personId,
+      related_person_id: relationship.relatedPersonId,
+      relationship_type: relationship.relationshipType,
+      description: relationship.description
+    }).select().single();
+    
+    if (error) throw error;
+    return {
+      id: data.id,
+      personId: data.person_id,
+      relatedPersonId: data.related_person_id,
+      relationshipType: data.relationship_type,
+      description: data.description
+    };
+  },
+
+  getPersonRelationships: async (personId: string): Promise<PersonRelationship[]> => {
+    const data = await handleResponse(
+      supabase.from('person_relationships')
+        .select('*')
+        .or(`person_id.eq.${personId},related_person_id.eq.${personId}`)
+    );
+    return Array.isArray(data) ? data.map((r: any) => ({
+      id: r.id,
+      personId: r.person_id,
+      relatedPersonId: r.related_person_id,
+      relationshipType: r.relationship_type,
+      description: r.description
+    })) : [];
   },
 
   // --- Issues ---

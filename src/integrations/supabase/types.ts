@@ -580,6 +580,7 @@ export type Database = {
           notes: string | null
           phone: string | null
           role: string
+          role_context: string | null
           user_id: string | null
         }
         Insert: {
@@ -591,6 +592,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           role: string
+          role_context?: string | null
           user_id?: string | null
         }
         Update: {
@@ -602,9 +604,55 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           role?: string
+          role_context?: string | null
           user_id?: string | null
         }
         Relationships: []
+      }
+      person_relationships: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          person_id: string
+          related_person_id: string
+          relationship_type: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          person_id: string
+          related_person_id: string
+          relationship_type: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          person_id?: string
+          related_person_id?: string
+          relationship_type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "person_relationships_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "person_relationships_related_person_id_fkey"
+            columns: ["related_person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profile_notes: {
         Row: {

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
-import { generatePersonAnalysis } from '../services/ai';
-import { Person, Role, ProfileNote, Conversation, Issue, Event } from '../types';
-import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save } from 'lucide-react';
+import { generatePersonAnalysis, clarifyPerson } from '../services/ai';
+import { Person, Role, ProfileNote, Conversation, Issue, Event, ClarificationQuestion, SuggestedRelationship, PersonRelationship } from '../types';
+import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon } from 'lucide-react';
+import { ClarificationModal } from './ClarificationModal';
 
 export const PeopleList: React.FC = () => {
   const [people, setPeople] = useState<Person[]>([]);
@@ -15,7 +16,17 @@ export const PeopleList: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<Role>(Role.Parent);
   const [newEmail, setNewEmail] = useState('');
+  const [newDescription, setNewDescription] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // Clarification State
+  const [showClarification, setShowClarification] = useState(false);
+  const [clarificationData, setClarificationData] = useState<{
+    questions: ClarificationQuestion[];
+    suggestedRelationships: SuggestedRelationship[];
+    enrichedContext: string;
+  } | null>(null);
+  const [clarifying, setClarifying] = useState(false);
 
   useEffect(() => {
     loadPeople();
@@ -26,20 +37,95 @@ export const PeopleList: React.FC = () => {
     api.getPeople().then(setPeople).finally(() => setLoading(false));
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleInitialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCreating(true);
+    setClarifying(true);
+    
     try {
-      await api.createPerson({ fullName: newName, role: newRole, email: newEmail });
-      setIsModalOpen(false);
-      setNewName('');
-      setNewEmail('');
+      // Call AI to analyze the person and get clarification questions
+      const result = await clarifyPerson(newRole, newName, newDescription, people);
+      
+      setClarificationData({
+        questions: result.questions,
+        suggestedRelationships: result.suggestedRelationships,
+        enrichedContext: result.enrichedContext || newDescription
+      });
+      setShowClarification(true);
+    } catch (err) {
+      console.error('Clarification error:', err);
+      // Fallback: create person directly without AI clarification
+      await createPersonDirectly(newDescription);
+    } finally {
+      setClarifying(false);
+    }
+  };
+
+  const handleClarificationConfirm = async (
+    answers: Record<string, string>,
+    confirmedRelationships: SuggestedRelationship[]
+  ) => {
+    setCreating(true);
+    
+    try {
+      let finalContext = clarificationData?.enrichedContext || newDescription;
+      
+      // If there were questions answered, re-run clarification to get updated context
+      if (Object.keys(answers).length > 0) {
+        const result = await clarifyPerson(newRole, newName, newDescription, people, answers);
+        finalContext = result.enrichedContext || finalContext;
+      }
+      
+      // Create the person
+      const createdPerson = await api.createPerson({
+        fullName: newName,
+        role: newRole,
+        email: newEmail || undefined,
+        roleContext: finalContext
+      });
+      
+      // Create relationships
+      for (const rel of confirmedRelationships) {
+        await api.createPersonRelationship({
+          personId: createdPerson.id,
+          relatedPersonId: rel.relatedPersonId,
+          relationshipType: rel.relationshipType,
+          description: rel.description
+        });
+      }
+      
+      // Reset and close
+      resetForm();
       loadPeople();
     } catch (err) {
-      console.error(err);
+      console.error('Create person error:', err);
     } finally {
       setCreating(false);
     }
+  };
+
+  const createPersonDirectly = async (context: string) => {
+    try {
+      await api.createPerson({
+        fullName: newName,
+        role: newRole,
+        email: newEmail || undefined,
+        roleContext: context
+      });
+      resetForm();
+      loadPeople();
+    } catch (err) {
+      console.error('Create person error:', err);
+    }
+  };
+
+  const resetForm = () => {
+    setIsModalOpen(false);
+    setShowClarification(false);
+    setClarificationData(null);
+    setNewName('');
+    setNewEmail('');
+    setNewDescription('');
+    setNewRole(Role.Parent);
   };
 
   const filteredPeople = filterRole === 'all' 
@@ -106,15 +192,15 @@ export const PeopleList: React.FC = () => {
         )}
       </div>
 
-      {/* Simple Modal for creating person */}
-      {isModalOpen && (
+      {/* Modal for creating person */}
+      {isModalOpen && !showClarification && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-slate-800">Add New Person</h3>
-              <button onClick={() => setIsModalOpen(false)}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
+              <button onClick={resetForm}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
             </div>
-            <form onSubmit={handleCreate} className="space-y-4">
+            <form onSubmit={handleInitialSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700">Full Name</label>
                 <input required type="text" value={newName} onChange={e => setNewName(e.target.value)} className="w-full mt-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
@@ -126,15 +212,45 @@ export const PeopleList: React.FC = () => {
                 </select>
               </div>
               <div>
+                <label className="block text-sm font-medium text-slate-700">Description</label>
+                <textarea 
+                  value={newDescription} 
+                  onChange={e => setNewDescription(e.target.value)} 
+                  rows={3}
+                  className="w-full mt-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                  placeholder="Describe who this person is... (e.g., 'Bryce's occupational therapist' or 'My ex-wife's new husband')"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-slate-700">Email (Optional)</label>
                 <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="w-full mt-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
               </div>
-              <button type="submit" disabled={creating} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
-                {creating ? 'Saving...' : 'Create Person'}
+              <button type="submit" disabled={clarifying} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {clarifying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  'Continue'
+                )}
               </button>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Clarification Modal */}
+      {showClarification && clarificationData && (
+        <ClarificationModal
+          personName={newName}
+          questions={clarificationData.questions}
+          suggestedRelationships={clarificationData.suggestedRelationships}
+          enrichedContext={clarificationData.enrichedContext}
+          onConfirm={handleClarificationConfirm}
+          onCancel={resetForm}
+          isProcessing={creating}
+        />
       )}
     </div>
   );
@@ -250,9 +366,14 @@ export const PersonDetail: React.FC = () => {
           <div className="flex justify-between items-start">
             <div>
               <h1 className="text-3xl font-bold text-slate-900">{person.fullName}</h1>
-              <span className="inline-block mt-2 bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium capitalize border border-indigo-100">
-                {person.role}
-              </span>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="inline-block bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium capitalize border border-indigo-100">
+                  {person.role}
+                </span>
+                {person.roleContext && (
+                  <span className="text-sm text-slate-600">{person.roleContext}</span>
+                )}
+              </div>
             </div>
           </div>
           

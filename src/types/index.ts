@@ -43,6 +43,37 @@ export interface Person {
   phone?: string;
   avatarUrl?: string;
   notes?: string;
+  roleContext?: string;
+}
+
+// --- Person Relationships Types ---
+
+export interface PersonRelationship {
+  id: string;
+  personId: string;
+  relatedPersonId: string;
+  relationshipType: string;
+  description?: string;
+}
+
+export interface ClarificationQuestion {
+  id: string;
+  question: string;
+  type: 'select' | 'text';
+  options?: string[];
+}
+
+export interface SuggestedRelationship {
+  relatedPersonId: string;
+  relatedPersonName: string;
+  relationshipType: string;
+  description?: string;
+}
+
+export interface ClarificationResult {
+  questions: ClarificationQuestion[];
+  suggestedRelationships: SuggestedRelationship[];
+  enrichedContext?: string;
 }
 
 export interface Conversation {
