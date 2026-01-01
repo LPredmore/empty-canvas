@@ -215,7 +215,7 @@ export const AssistantView: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 px-2 py-1 bg-background border border-border rounded-lg text-[10px] font-bold text-muted-foreground uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            Gemini 2.5 Flash
+            GPT-4o
           </div>
         </div>
 
