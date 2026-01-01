@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { api } from './api';
-import { AssistantSenderType, MessageDirection } from '../types';
+import { AssistantSenderType, MessageDirection, Role, Person, ClarificationResult } from '../types';
 import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
 
 // Re-export the parser types for external use
@@ -293,4 +293,40 @@ export async function processStream(
   }
 
   return fullText;
+}
+
+/**
+ * Clarify a person's role and relationships using AI
+ */
+export async function clarifyPerson(
+  role: Role,
+  fullName: string,
+  description: string,
+  existingPeople: Person[],
+  answers?: Record<string, string>
+): Promise<ClarificationResult> {
+  const { data, error } = await supabase.functions.invoke('clarify-person', {
+    body: {
+      role,
+      fullName,
+      description,
+      existingPeople: existingPeople.map(p => ({
+        id: p.id,
+        fullName: p.fullName,
+        role: p.role
+      })),
+      answers
+    }
+  });
+
+  if (error) {
+    console.error('Clarify person error:', error);
+    throw error;
+  }
+
+  return {
+    questions: data.questions || [],
+    suggestedRelationships: data.suggestedRelationships || [],
+    enrichedContext: data.enrichedContext || description
+  };
 }
