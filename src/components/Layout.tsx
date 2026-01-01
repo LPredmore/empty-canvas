@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '@/services/api';
+import { api } from '../services/api';
 import { ImportWizard } from './ImportWizard';
 import { 
   LayoutDashboard, Users, MessageSquare, AlertCircle, History, 

@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Layout } from '@/components/Layout';
-import { Dashboard } from '@/components/Dashboard';
-import { PeopleList, PersonDetail } from '@/components/PeopleViews';
-import { ConversationList, ConversationDetail } from '@/components/ConversationViews';
-import { IssueList, IssueDetail } from '@/components/IssueViews';
-import { TimelineView } from '@/components/TimelineView';
-import { RulesDashboard, LegalDocDetail, AgreementDetail } from '@/components/RulesViews';
-import { AssistantView } from '@/components/AssistantView';
-import { Login } from '@/components/Login';
-import { supabase } from '@/lib/supabase';
+import { Layout } from './components/Layout';
+import { Dashboard } from './components/Dashboard';
+import { PeopleList, PersonDetail } from './components/PeopleViews';
+import { ConversationList, ConversationDetail } from './components/ConversationViews';
+import { IssueList, IssueDetail } from './components/IssueViews';
+import { TimelineView } from './components/TimelineView';
+import { RulesDashboard, LegalDocDetail, AgreementDetail } from './components/RulesViews';
+import { AssistantView } from './components/AssistantView';
+import { Login } from './components/Login';
+import { supabase } from './lib/supabase';
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
