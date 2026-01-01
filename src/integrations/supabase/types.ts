@@ -21,6 +21,7 @@ export type Database = {
           id: string
           target_id: string
           target_type: string
+          user_id: string | null
         }
         Insert: {
           agreement_item_id?: string | null
@@ -28,6 +29,7 @@ export type Database = {
           id?: string
           target_id: string
           target_type: string
+          user_id?: string | null
         }
         Update: {
           agreement_item_id?: string | null
@@ -35,6 +37,7 @@ export type Database = {
           id?: string
           target_id?: string
           target_type?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -56,6 +59,7 @@ export type Database = {
           item_ref: string | null
           summary: string | null
           topic: string
+          user_id: string | null
         }
         Insert: {
           agreement_id?: string | null
@@ -66,6 +70,7 @@ export type Database = {
           item_ref?: string | null
           summary?: string | null
           topic: string
+          user_id?: string | null
         }
         Update: {
           agreement_id?: string | null
@@ -76,6 +81,7 @@ export type Database = {
           item_ref?: string | null
           summary?: string | null
           topic?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -91,14 +97,17 @@ export type Database = {
         Row: {
           agreement_id: string
           person_id: string
+          user_id: string | null
         }
         Insert: {
           agreement_id: string
           person_id: string
+          user_id?: string | null
         }
         Update: {
           agreement_id?: string
           person_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -127,6 +136,7 @@ export type Database = {
           source_type: string
           status: string
           title: string
+          user_id: string | null
         }
         Insert: {
           agreed_date?: string | null
@@ -137,6 +147,7 @@ export type Database = {
           source_type: string
           status: string
           title: string
+          user_id?: string | null
         }
         Update: {
           agreed_date?: string | null
@@ -147,6 +158,7 @@ export type Database = {
           source_type?: string
           status?: string
           title?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -159,6 +171,7 @@ export type Database = {
           linked_target_id: string | null
           linked_target_type: string | null
           sender_type: string
+          user_id: string | null
         }
         Insert: {
           assistant_session_id?: string | null
@@ -168,6 +181,7 @@ export type Database = {
           linked_target_id?: string | null
           linked_target_type?: string | null
           sender_type: string
+          user_id?: string | null
         }
         Update: {
           assistant_session_id?: string | null
@@ -177,6 +191,7 @@ export type Database = {
           linked_target_id?: string | null
           linked_target_type?: string | null
           sender_type?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -194,18 +209,21 @@ export type Database = {
           id: string
           last_activity_at: string
           title: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
           id?: string
           last_activity_at?: string
           title: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
           id?: string
           last_activity_at?: string
           title?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -374,6 +392,7 @@ export type Database = {
           legal_clause_id: string | null
           target_id: string
           target_type: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -381,6 +400,7 @@ export type Database = {
           legal_clause_id?: string | null
           target_id: string
           target_type: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -388,6 +408,7 @@ export type Database = {
           legal_clause_id?: string | null
           target_id?: string
           target_type?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -409,6 +430,7 @@ export type Database = {
           legal_document_id: string | null
           summary: string | null
           topic: string
+          user_id: string | null
         }
         Insert: {
           clause_ref: string
@@ -419,6 +441,7 @@ export type Database = {
           legal_document_id?: string | null
           summary?: string | null
           topic: string
+          user_id?: string | null
         }
         Update: {
           clause_ref?: string
@@ -429,6 +452,7 @@ export type Database = {
           legal_document_id?: string | null
           summary?: string | null
           topic?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -454,6 +478,7 @@ export type Database = {
           notes: string | null
           signed_date: string | null
           title: string
+          user_id: string | null
         }
         Insert: {
           case_number?: string | null
@@ -468,6 +493,7 @@ export type Database = {
           notes?: string | null
           signed_date?: string | null
           title: string
+          user_id?: string | null
         }
         Update: {
           case_number?: string | null
@@ -482,6 +508,7 @@ export type Database = {
           notes?: string | null
           signed_date?: string | null
           title?: string
+          user_id?: string | null
         }
         Relationships: []
       }

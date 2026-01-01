@@ -163,6 +163,68 @@ export interface LegalClause {
   relatedIssueIds?: string[];
 }
 
+// --- Document Extraction Types ---
+
+export type AgreementCategory = 
+  | 'decision_making'
+  | 'parenting_time'
+  | 'holiday_schedule'
+  | 'school'
+  | 'communication'
+  | 'financial'
+  | 'travel'
+  | 'right_of_first_refusal'
+  | 'exchange'
+  | 'medical'
+  | 'extracurricular'
+  | 'technology'
+  | 'third_party'
+  | 'dispute_resolution'
+  | 'modification'
+  | 'other';
+
+export interface ExtractedPerson {
+  name: string;
+  suggestedRole: Role;
+  context: string;
+  includeInCreation?: boolean;
+  editedRole?: Role;
+  editedContext?: string;
+}
+
+export interface ExtractedClause {
+  clauseRef: string;
+  topic: string;
+  fullText: string;
+  summary: string;
+  include?: boolean;
+}
+
+export interface ExtractedAgreement {
+  topic: string;
+  category: AgreementCategory;
+  fullText: string;
+  summary: string;
+  include?: boolean;
+}
+
+export interface DocumentExtractionMetadata {
+  suggestedTitle: string;
+  documentType: LegalDocumentType;
+  courtName?: string;
+  caseNumber?: string;
+  jurisdiction?: string;
+  effectiveDate?: string;
+  signedDate?: string;
+}
+
+export interface DocumentExtractionResult {
+  metadata: DocumentExtractionMetadata;
+  extractedPeople: ExtractedPerson[];
+  legalClauses: ExtractedClause[];
+  operationalAgreements: ExtractedAgreement[];
+}
+
 export enum AgreementStatus {
   Proposed = 'proposed',
   Agreed = 'agreed',

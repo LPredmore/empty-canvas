@@ -1,6 +1,14 @@
 import { supabase } from '../lib/supabase';
 import { api } from './api';
-import { AssistantSenderType, MessageDirection, Role, Person, ClarificationResult, ConversationTurn } from '../types';
+import { 
+  AssistantSenderType, 
+  MessageDirection, 
+  Role, 
+  Person, 
+  ClarificationResult, 
+  ConversationTurn,
+  DocumentExtractionResult
+} from '../types';
 import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
 
 // Re-export the parser types for external use
@@ -332,4 +340,103 @@ export async function clarifyPerson(
     enrichedContext: data.enrichedContext,
     suggestedRelationships: data.suggestedRelationships || []
   };
+}
+/**
+ * Parse a legal document (parenting plan, court order, etc.) and extract all relevant information
+ */
+export async function parseLegalDocument(file: File): Promise<DocumentExtractionResult> {
+  let documentContent: string;
+  const mimeType = file.type;
+  const fileName = file.name;
+
+  // Convert file to appropriate format
+  if (mimeType.startsWith('image/')) {
+    // For images, use base64
+    documentContent = await fileToBase64(file);
+  } else {
+    // For text/PDF, extract text content
+    documentContent = await file.text();
+  }
+
+  console.log(`Parsing legal document: ${fileName}, type: ${mimeType}`);
+
+  const { data, error } = await supabase.functions.invoke('parse-legal-document', {
+    body: {
+      documentContent,
+      fileName,
+      mimeType
+    }
+  });
+
+  if (error) {
+    console.error('Parse legal document error:', error);
+    throw new Error(error.message || 'Failed to parse legal document');
+  }
+
+  if (data.error) {
+    throw new Error(data.error);
+  }
+
+  // Normalize the extracted people roles to match our Role enum
+  const normalizedPeople = (data.extractedPeople || []).map((person: any) => ({
+    ...person,
+    suggestedRole: normalizeRole(person.suggestedRole),
+    includeInCreation: true
+  }));
+
+  // Mark all clauses and agreements as included by default
+  const normalizedClauses = (data.legalClauses || []).map((clause: any) => ({
+    ...clause,
+    include: true
+  }));
+
+  const normalizedAgreements = (data.operationalAgreements || []).map((agreement: any) => ({
+    ...agreement,
+    include: true
+  }));
+
+  return {
+    metadata: data.metadata,
+    extractedPeople: normalizedPeople,
+    legalClauses: normalizedClauses,
+    operationalAgreements: normalizedAgreements
+  };
+}
+
+/**
+ * Normalize role strings from AI to our Role enum
+ */
+function normalizeRole(roleStr: string): Role {
+  const normalized = roleStr?.toLowerCase().replace(/[-_\s]/g, '');
+  
+  switch (normalized) {
+    case 'parent':
+    case 'mother':
+    case 'father':
+      return Role.Parent;
+    case 'child':
+    case 'minorchild':
+      return Role.Child;
+    case 'stepparent':
+    case 'stepmother':
+    case 'stepfather':
+      return Role.StepParent;
+    case 'clinician':
+    case 'therapist':
+    case 'counselor':
+    case 'psychologist':
+    case 'psychiatrist':
+      return Role.Clinician;
+    case 'legal':
+    case 'attorney':
+    case 'lawyer':
+    case 'judge':
+    case 'magistrate':
+    case 'guardian':
+    case 'gal':
+    case 'guardianadlitem':
+      return Role.Legal;
+    default:
+      return Role.Other;
+  }
 }
