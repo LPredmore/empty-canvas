@@ -3,7 +3,8 @@ import {
   Person, Conversation, Message, Issue, Event, ProfileNote, 
   LegalDocument, LegalClause, Agreement, AgreementItem,
   AssistantSession, AssistantMessage, AssistantSenderType,
-  PersonRelationship
+  PersonRelationship, ExtractedClause, ExtractedAgreement,
+  AgreementSourceType, AgreementStatus, Role
 } from '../types';
 
 // --- SYSTEM INSTRUCTIONS ---
@@ -588,6 +589,23 @@ export const api = {
     };
   },
 
+  updateLegalDocument: async (id: string, updates: Partial<LegalDocument>): Promise<void> => {
+    const updateData: any = {};
+    if (updates.title !== undefined) updateData.title = updates.title;
+    if (updates.documentType !== undefined) updateData.document_type = updates.documentType;
+    if (updates.courtName !== undefined) updateData.court_name = updates.courtName;
+    if (updates.caseNumber !== undefined) updateData.case_number = updates.caseNumber;
+    if (updates.signedDate !== undefined) updateData.signed_date = updates.signedDate;
+    if (updates.effectiveDate !== undefined) updateData.effective_date = updates.effectiveDate;
+    if (updates.endDate !== undefined) updateData.end_date = updates.endDate;
+    if (updates.jurisdiction !== undefined) updateData.jurisdiction = updates.jurisdiction;
+    if (updates.notes !== undefined) updateData.notes = updates.notes;
+    if (updates.fileUrl !== undefined) updateData.file_url = updates.fileUrl;
+    
+    const { error } = await supabase.from('legal_documents').update(updateData).eq('id', id);
+    if (error) throw error;
+  },
+
   // --- Legal Clauses ---
   getLegalClauses: async (docId?: string): Promise<LegalClause[]> => {
     let query = supabase.from('legal_clauses').select('*, legal_clause_links(target_id)');
@@ -818,5 +836,143 @@ export const api = {
         linkedTargetId: msg.linked_target_id
       };
   },
+
+  // --- Bulk Creation for Document Import ---
+  
+  uploadLegalDocumentFile: async (file: File, docId: string): Promise<string> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    
+    const filePath = `${user.id}/${docId}/${file.name.replace(/\s+/g, '_')}`;
+    
+    const { error: uploadError } = await supabase.storage
+      .from('legal-documents')
+      .upload(filePath, file);
+    
+    if (uploadError) throw uploadError;
+    
+    const { data: { publicUrl } } = supabase.storage
+      .from('legal-documents')
+      .getPublicUrl(filePath);
+    
+    return publicUrl;
+  },
+
+  createLegalClausesBulk: async (docId: string, clauses: ExtractedClause[]): Promise<LegalClause[]> => {
+    if (clauses.length === 0) return [];
+    
+    const inserts = clauses.map(c => ({
+      legal_document_id: docId,
+      clause_ref: c.clauseRef,
+      topic: c.topic,
+      full_text: c.fullText,
+      summary: c.summary,
+      is_active: true
+    }));
+    
+    const { data, error } = await supabase.from('legal_clauses').insert(inserts).select();
+    if (error) throw error;
+    
+    return (data || []).map((c: any) => ({
+      id: c.id,
+      legalDocumentId: c.legal_document_id,
+      clauseRef: c.clause_ref,
+      topic: c.topic,
+      fullText: c.full_text,
+      summary: c.summary,
+      isActive: c.is_active
+    }));
+  },
+
+  createAgreementWithItemsBulk: async (
+    title: string,
+    sourceRef: string,
+    items: ExtractedAgreement[]
+  ): Promise<{ agreement: Agreement; items: AgreementItem[] }> => {
+    // Create parent agreement
+    const { data: agreementData, error: agreementError } = await supabase
+      .from('agreements')
+      .insert({
+        title,
+        description: `Extracted from: ${sourceRef}`,
+        source_type: AgreementSourceType.Other,
+        source_reference: sourceRef,
+        status: AgreementStatus.Agreed,
+        agreed_date: new Date().toISOString()
+      })
+      .select()
+      .single();
+    
+    if (agreementError) throw agreementError;
+    
+    const agreement: Agreement = {
+      id: agreementData.id,
+      title: agreementData.title,
+      description: agreementData.description,
+      sourceType: agreementData.source_type,
+      sourceReference: agreementData.source_reference,
+      agreedDate: agreementData.agreed_date,
+      status: agreementData.status,
+      createdAt: agreementData.created_at,
+      partyIds: []
+    };
+    
+    // Create agreement items
+    if (items.length === 0) {
+      return { agreement, items: [] };
+    }
+    
+    const itemInserts = items.map((item, idx) => ({
+      agreement_id: agreement.id,
+      item_ref: `${item.category}-${idx + 1}`,
+      topic: item.topic,
+      full_text: item.fullText,
+      summary: item.summary,
+      is_active: true
+    }));
+    
+    const { data: itemsData, error: itemsError } = await supabase
+      .from('agreement_items')
+      .insert(itemInserts)
+      .select();
+    
+    if (itemsError) throw itemsError;
+    
+    const agreementItems: AgreementItem[] = (itemsData || []).map((i: any) => ({
+      id: i.id,
+      agreementId: i.agreement_id,
+      itemRef: i.item_ref,
+      topic: i.topic,
+      fullText: i.full_text,
+      summary: i.summary,
+      isActive: i.is_active
+    }));
+    
+    return { agreement, items: agreementItems };
+  },
+
+  createPeopleBulk: async (people: Array<{ name: string; role: Role; context: string }>): Promise<Person[]> => {
+    if (people.length === 0) return [];
+    
+    const inserts = people.map(p => ({
+      full_name: p.name,
+      role: p.role,
+      role_context: p.context
+    }));
+    
+    const { data, error } = await supabase.from('people').insert(inserts).select();
+    if (error) throw error;
+    
+    return (data || []).map((p: any) => ({
+      id: p.id,
+      fullName: p.full_name,
+      role: p.role,
+      email: p.email,
+      phone: p.phone,
+      avatarUrl: p.avatar_url,
+      notes: p.notes,
+      roleContext: p.role_context
+    }));
+  }
 
 };
