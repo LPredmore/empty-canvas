@@ -16,10 +16,17 @@ export const TimelineView: React.FC = () => {
     ]).then(([messages, events, people]) => {
       const combined = [
         ...messages.map(m => {
-          const person = people.find(p => p.id === m.senderId);
-          return { type: 'message', data: m, date: m.sentAt, authorName: person ? person.fullName : 'Unknown' };
+          const sender = people.find(p => p.id === m.senderId);
+          const receiver = people.find(p => p.id === m.receiverId);
+          return { 
+            type: 'message', 
+            data: m, 
+            date: m.sentAt, 
+            senderName: sender ? sender.fullName : 'Unknown',
+            receiverName: receiver ? receiver.fullName : 'Unknown'
+          };
         }),
-        ...events.map(e => ({ type: 'event', data: e, date: e.date, authorName: null }))
+        ...events.map(e => ({ type: 'event', data: e, date: e.date, senderName: null, receiverName: null }))
       ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       
       setItems(combined);
@@ -50,8 +57,8 @@ export const TimelineView: React.FC = () => {
                content = evt.description;
                icon = <Calendar className="w-5 h-5 text-emerald-600" />;
             } else {
-               const msg = item.data;
-               title = `Message from ${item.authorName}`;
+               const msg = item.data as Message;
+               title = `${item.senderName} → ${item.receiverName}`;
                content = msg.rawText;
                icon = <MessageSquare className="w-5 h-5 text-indigo-600" />;
             }

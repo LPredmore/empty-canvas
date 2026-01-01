@@ -108,9 +108,10 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             }
         }
 
-        // 2. Prepare Messages with resolved sender IDs
+        // 2. Prepare Messages with resolved sender and receiver IDs
         const messagesToSave = parsedData.messages.map(msg => {
             const senderId = nameToIdMap[msg.senderName];
+            const receiverId = nameToIdMap[msg.receiverName];
             
             // Heuristic for Direction if AI didn't catch it perfectly or user changed mapping:
             // If the sender maps to "ME", it's outbound.
@@ -121,18 +122,25 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                 rawText: msg.body,
                 sentAt: msg.sentAt.toISOString(),
                 senderId: senderId,
+                receiverId: receiverId || undefined,
                 direction: direction
             };
         }).filter(m => m.senderId); // Ensure we have a sender
 
-        // 3. Create Conversation via API
+        // 3. Calculate date range from messages
+        const sortedMessages = [...parsedData.messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
+        const firstDate = sortedMessages[0]?.sentAt.toISOString();
+        const lastDate = sortedMessages[sortedMessages.length - 1]?.sentAt.toISOString();
+
+        // 4. Create Conversation via API
         const preview = parsedData.messages[0]?.body.substring(0, 100) + '...' || '';
         
         const newConversation = await api.importConversation(
             {
                 title: conversationTitle,
                 sourceType: sourceType,
-                startedAt: parsedData.messages[0]?.sentAt.toISOString() || new Date().toISOString(),
+                startedAt: firstDate || new Date().toISOString(),
+                endedAt: lastDate || new Date().toISOString(),
                 previewText: preview
             },
             finalPersonIds,
