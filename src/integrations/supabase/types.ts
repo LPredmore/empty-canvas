@@ -227,6 +227,66 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_analyses: {
+        Row: {
+          agreement_violations: Json | null
+          conversation_id: string
+          created_at: string
+          id: string
+          key_topics: Json | null
+          message_annotations: Json | null
+          overall_tone: string
+          summary: string
+          user_id: string | null
+        }
+        Insert: {
+          agreement_violations?: Json | null
+          conversation_id: string
+          created_at?: string
+          id?: string
+          key_topics?: Json | null
+          message_annotations?: Json | null
+          overall_tone: string
+          summary: string
+          user_id?: string | null
+        }
+        Update: {
+          agreement_violations?: Json | null
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          key_topics?: Json | null
+          message_annotations?: Json | null
+          overall_tone?: string
+          summary?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      conversation_issue_links: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          issue_id: string
+          link_reason: string | null
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          issue_id: string
+          link_reason?: string | null
+          user_id?: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          issue_id?: string
+          link_reason?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversation_participants: {
         Row: {
           conversation_id: string
