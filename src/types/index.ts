@@ -170,8 +170,17 @@ export interface LegalClause {
   relatedIssueIds?: string[];
 }
 
-// --- Document Extraction Types ---
+// --- Topic Categories (from database) ---
 
+export interface TopicCategory {
+  id: string;
+  slug: string;
+  displayName: string;
+  description?: string;
+  sortOrder: number;
+}
+
+// Kept for backwards compatibility - now fetched dynamically from topic_categories table
 export type AgreementCategory = 
   | 'decision_making'
   | 'parenting_time'
@@ -189,6 +198,33 @@ export type AgreementCategory =
   | 'dispute_resolution'
   | 'modification'
   | 'other';
+
+// --- Conversation Analysis Types ---
+
+export interface ConversationAnalysis {
+  id: string;
+  conversationId: string;
+  summary: string;
+  overallTone: 'cooperative' | 'neutral' | 'contentious' | 'hostile';
+  keyTopics: string[];
+  topicCategorySlugs: string[];
+  agreementViolations: any[];
+  messageAnnotations: any[];
+  createdAt: string;
+}
+
+export interface RelatedConversationDiscovery {
+  conversationId: string;
+  title: string;
+  dateRange: { start: string; end?: string };
+  relationshipTypes: ('shared_issue' | 'shared_category' | 'agreement_source' | 'same_participants')[];
+  sharedIssueIds?: string[];
+  sharedCategorySlugs?: string[];
+  summary?: string;
+  tone?: string;
+}
+
+// --- Document Extraction Types ---
 
 export interface ExtractedPerson {
   name: string;

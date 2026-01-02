@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
-import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus } from '../types';
+import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus, ConversationAnalysis } from '../types';
 import { format, isSameDay, isSameMonth, isSameYear, differenceInDays } from 'date-fns';
 import { Search, Filter, Paperclip, Send, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User } from 'lucide-react';
+import { ConversationAnalysisPanel } from './ConversationAnalysisPanel';
 
 const formatDateRange = (startedAt?: string, endedAt?: string): string => {
   if (!startedAt) return '';
@@ -199,8 +200,11 @@ export const ConversationDetail: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [analysis, setAnalysis] = useState<ConversationAnalysis | null>(null);
+  const [linkedIssues, setLinkedIssues] = useState<Array<{ issueId: string; reason?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
   
   // Tagging State
   const [taggingMsgId, setTaggingMsgId] = useState<string | null>(null);
@@ -210,18 +214,87 @@ export const ConversationDetail: React.FC = () => {
     loadData();
   }, [id]);
 
-  const loadData = () => {
-    Promise.all([
-      api.getConversation(id!),
-      api.getMessages(id!),
-      api.getPeople(),
-      api.getIssues()
-    ]).then(([c, m, p, i]) => {
+  const loadData = async () => {
+    try {
+      const [c, m, p, i, a, links] = await Promise.all([
+        api.getConversation(id!),
+        api.getMessages(id!),
+        api.getPeople(),
+        api.getIssues(),
+        api.getConversationAnalysis(id!),
+        api.getConversationIssueLinks(id!)
+      ]);
       setConversation(c);
       setMessages(m.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()));
       setPeople(p);
       setIssues(i);
-    }).finally(() => setLoading(false));
+      setAnalysis(a);
+      setLinkedIssues(links);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefreshAnalysis = async () => {
+    if (!conversation || !id) return;
+    setRefreshingAnalysis(true);
+    
+    try {
+      // Get messages for analysis
+      const msgs = await api.getMessages(id);
+      const agreements = await api.getAllActiveAgreementItems();
+      
+      // Call the analysis edge function
+      const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
+        body: {
+          messages: msgs.map(m => ({
+            id: m.id,
+            senderId: m.senderId,
+            rawText: m.rawText,
+            sentAt: m.sentAt,
+            direction: m.direction
+          })),
+          participants: people.filter(p => conversation.participantIds.includes(p.id)).map(p => ({
+            id: p.id,
+            name: p.fullName,
+            role: p.role
+          })),
+          existingAgreements: agreements.map(a => ({
+            id: a.id,
+            topic: a.topic,
+            summary: a.summary || a.fullText.slice(0, 100)
+          })),
+          existingIssues: issues.map(i => ({
+            id: i.id,
+            title: i.title,
+            status: i.status
+          }))
+        }
+      });
+      
+      if (error) throw error;
+      
+      if (data) {
+        // Save the analysis
+        await api.saveConversationAnalysis({
+          conversationId: id,
+          summary: data.conversationAnalysis?.summary || 'Analysis complete',
+          overallTone: data.conversationAnalysis?.overallTone || 'neutral',
+          keyTopics: data.conversationAnalysis?.keyTopics || [],
+          topicCategorySlugs: data.topicCategorySlugs || [],
+          agreementViolations: data.agreementViolations || [],
+          messageAnnotations: data.messageAnnotations || []
+        });
+        
+        // Reload the analysis
+        const newAnalysis = await api.getConversationAnalysis(id);
+        setAnalysis(newAnalysis);
+      }
+    } catch (e) {
+      console.error('Failed to refresh analysis:', e);
+    } finally {
+      setRefreshingAnalysis(false);
+    }
   };
 
   const handleTagIssue = async (issueId: string) => {
@@ -323,6 +396,19 @@ export const ConversationDetail: React.FC = () => {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Analysis Panel */}
+      <div className="px-4 pt-4">
+        <ConversationAnalysisPanel
+          conversationId={id!}
+          conversation={conversation}
+          analysis={analysis}
+          linkedIssues={linkedIssues}
+          issues={issues}
+          onRefreshAnalysis={handleRefreshAnalysis}
+          isRefreshing={refreshingAnalysis}
+        />
       </div>
 
       {/* Messages Area */}

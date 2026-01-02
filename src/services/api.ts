@@ -4,7 +4,8 @@ import {
   LegalDocument, LegalClause, Agreement, AgreementItem,
   AssistantSession, AssistantMessage, AssistantSenderType,
   PersonRelationship, ExtractedClause, ExtractedAgreement,
-  AgreementSourceType, AgreementStatus, Role, ConversationStatus
+  AgreementSourceType, AgreementStatus, Role, ConversationStatus,
+  TopicCategory, ConversationAnalysis, RelatedConversationDiscovery
 } from '../types';
 
 // --- SYSTEM INSTRUCTIONS ---
@@ -1173,11 +1174,49 @@ export const api = {
 
   // --- Conversation Analysis ---
   
+  // --- Topic Categories ---
+  
+  getTopicCategories: async (): Promise<TopicCategory[]> => {
+    const { data, error } = await supabase
+      .from('topic_categories')
+      .select('*')
+      .order('sort_order', { ascending: true });
+    
+    if (error || !data) return [];
+    return data.map((c: any) => ({
+      id: c.id,
+      slug: c.slug,
+      displayName: c.display_name,
+      description: c.description,
+      sortOrder: c.sort_order
+    }));
+  },
+
+  getTopicCategoryBySlug: async (slug: string): Promise<TopicCategory | null> => {
+    const { data, error } = await supabase
+      .from('topic_categories')
+      .select('*')
+      .eq('slug', slug)
+      .single();
+    
+    if (error || !data) return null;
+    return {
+      id: data.id,
+      slug: data.slug,
+      displayName: data.display_name,
+      description: data.description,
+      sortOrder: data.sort_order
+    };
+  },
+
+  // --- Conversation Analysis ---
+  
   saveConversationAnalysis: async (analysis: {
     conversationId: string;
     summary: string;
     overallTone: string;
     keyTopics: string[];
+    topicCategorySlugs?: string[];
     agreementViolations: any[];
     messageAnnotations: any[];
   }): Promise<void> => {
@@ -1186,6 +1225,7 @@ export const api = {
       summary: analysis.summary,
       overall_tone: analysis.overallTone,
       key_topics: analysis.keyTopics,
+      topic_category_slugs: analysis.topicCategorySlugs || [],
       agreement_violations: analysis.agreementViolations,
       message_annotations: analysis.messageAnnotations
     }, { onConflict: 'conversation_id,user_id' });
@@ -1193,7 +1233,7 @@ export const api = {
     if (error) throw error;
   },
 
-  getConversationAnalysis: async (conversationId: string): Promise<any | null> => {
+  getConversationAnalysis: async (conversationId: string): Promise<ConversationAnalysis | null> => {
     const { data, error } = await supabase
       .from('conversation_analyses')
       .select('*')
@@ -1206,11 +1246,208 @@ export const api = {
       conversationId: data.conversation_id,
       summary: data.summary,
       overallTone: data.overall_tone,
-      keyTopics: data.key_topics,
-      agreementViolations: data.agreement_violations,
-      messageAnnotations: data.message_annotations,
+      keyTopics: data.key_topics || [],
+      topicCategorySlugs: data.topic_category_slugs || [],
+      agreementViolations: data.agreement_violations || [],
+      messageAnnotations: data.message_annotations || [],
       createdAt: data.created_at
     };
+  },
+
+  // --- Discovery Functions for Related Conversations ---
+  
+  getConversationsWithSharedIssues: async (conversationId: string): Promise<RelatedConversationDiscovery[]> => {
+    // Get issues linked to this conversation
+    const myLinks = await api.getConversationIssueLinks(conversationId);
+    const myIssueIds = myLinks.map(l => l.issueId);
+    if (myIssueIds.length === 0) return [];
+    
+    // Get current conversation for temporal filter
+    const current = await api.getConversation(conversationId);
+    if (!current) return [];
+    const cutoff = current.endedAt || current.startedAt;
+    
+    // Find other conversations linked to same issues
+    const { data, error } = await supabase
+      .from('conversation_issue_links')
+      .select('conversation_id, issue_id')
+      .in('issue_id', myIssueIds)
+      .neq('conversation_id', conversationId);
+    
+    if (error || !data) return [];
+    
+    // Group by conversation ID
+    const convMap = new Map<string, string[]>();
+    for (const link of data) {
+      const existing = convMap.get(link.conversation_id) || [];
+      existing.push(link.issue_id);
+      convMap.set(link.conversation_id, existing);
+    }
+    
+    // Fetch conversation details and filter by temporal constraint
+    const results: RelatedConversationDiscovery[] = [];
+    for (const [convId, issueIds] of convMap) {
+      const conv = await api.getConversation(convId);
+      if (!conv) continue;
+      
+      // Temporal filter: only conversations that ended before or at same time
+      const convEnd = conv.endedAt || conv.startedAt;
+      if (cutoff && convEnd && new Date(convEnd) > new Date(cutoff)) continue;
+      
+      results.push({
+        conversationId: convId,
+        title: conv.title,
+        dateRange: { start: conv.startedAt, end: conv.endedAt },
+        relationshipTypes: ['shared_issue'],
+        sharedIssueIds: [...new Set(issueIds)]
+      });
+    }
+    
+    return results;
+  },
+
+  getConversationsWithSharedCategories: async (
+    conversationId: string, 
+    mySlugs: string[]
+  ): Promise<RelatedConversationDiscovery[]> => {
+    if (mySlugs.length === 0) return [];
+    
+    const current = await api.getConversation(conversationId);
+    if (!current) return [];
+    const cutoff = current.endedAt || current.startedAt;
+    
+    // Find analyses with overlapping categories
+    const { data, error } = await supabase
+      .from('conversation_analyses')
+      .select('conversation_id, topic_category_slugs, summary, overall_tone')
+      .neq('conversation_id', conversationId);
+    
+    if (error || !data) return [];
+    
+    const results: RelatedConversationDiscovery[] = [];
+    for (const analysis of data) {
+      const slugs = analysis.topic_category_slugs || [];
+      const sharedSlugs = slugs.filter((s: string) => mySlugs.includes(s));
+      if (sharedSlugs.length === 0) continue;
+      
+      const conv = await api.getConversation(analysis.conversation_id);
+      if (!conv) continue;
+      
+      // Temporal filter
+      const convEnd = conv.endedAt || conv.startedAt;
+      if (cutoff && convEnd && new Date(convEnd) > new Date(cutoff)) continue;
+      
+      results.push({
+        conversationId: analysis.conversation_id,
+        title: conv.title,
+        dateRange: { start: conv.startedAt, end: conv.endedAt },
+        relationshipTypes: ['shared_category'],
+        sharedCategorySlugs: sharedSlugs,
+        summary: analysis.summary,
+        tone: analysis.overall_tone
+      });
+    }
+    
+    return results;
+  },
+
+  getConversationsFromAgreementSources: async (conversationId: string): Promise<RelatedConversationDiscovery[]> => {
+    // Find agreement items that reference this conversation as source
+    const { data: itemsFromThis, error: err1 } = await supabase
+      .from('agreement_items')
+      .select('id, topic, source_conversation_id, overrides_item_id')
+      .eq('source_conversation_id', conversationId);
+    
+    if (err1) return [];
+    
+    // Find items that this conversation's items override (trace back)
+    const overriddenIds = (itemsFromThis || [])
+      .map(i => i.overrides_item_id)
+      .filter(Boolean);
+    
+    if (overriddenIds.length === 0) return [];
+    
+    const { data: overriddenItems, error: err2 } = await supabase
+      .from('agreement_items')
+      .select('source_conversation_id')
+      .in('id', overriddenIds);
+    
+    if (err2 || !overriddenItems) return [];
+    
+    const sourceConvIds = [...new Set(
+      overriddenItems
+        .map(i => i.source_conversation_id)
+        .filter(Boolean)
+        .filter(id => id !== conversationId)
+    )];
+    
+    const results: RelatedConversationDiscovery[] = [];
+    for (const convId of sourceConvIds) {
+      const conv = await api.getConversation(convId);
+      if (!conv) continue;
+      
+      results.push({
+        conversationId: convId,
+        title: conv.title,
+        dateRange: { start: conv.startedAt, end: conv.endedAt },
+        relationshipTypes: ['agreement_source']
+      });
+    }
+    
+    return results;
+  },
+
+  discoverRelatedConversations: async (conversationId: string): Promise<RelatedConversationDiscovery[]> => {
+    // Get current analysis for categories
+    const myAnalysis = await api.getConversationAnalysis(conversationId);
+    const mySlugs = myAnalysis?.topicCategorySlugs || [];
+    
+    // Run all discovery methods in parallel
+    const [sharedIssues, agreementSources, sharedCategories] = await Promise.all([
+      api.getConversationsWithSharedIssues(conversationId),
+      api.getConversationsFromAgreementSources(conversationId),
+      api.getConversationsWithSharedCategories(conversationId, mySlugs)
+    ]);
+    
+    // Merge and deduplicate by conversation ID
+    const merged = new Map<string, RelatedConversationDiscovery>();
+    
+    const addToMerged = (discoveries: RelatedConversationDiscovery[]) => {
+      for (const d of discoveries) {
+        const existing = merged.get(d.conversationId);
+        if (existing) {
+          // Merge relationship types
+          const types = new Set([...existing.relationshipTypes, ...d.relationshipTypes]);
+          existing.relationshipTypes = [...types] as any;
+          if (d.sharedIssueIds) {
+            existing.sharedIssueIds = [...new Set([...(existing.sharedIssueIds || []), ...d.sharedIssueIds])];
+          }
+          if (d.sharedCategorySlugs) {
+            existing.sharedCategorySlugs = [...new Set([...(existing.sharedCategorySlugs || []), ...d.sharedCategorySlugs])];
+          }
+          if (d.summary && !existing.summary) existing.summary = d.summary;
+          if (d.tone && !existing.tone) existing.tone = d.tone;
+        } else {
+          merged.set(d.conversationId, { ...d });
+        }
+      }
+    };
+    
+    addToMerged(sharedIssues);
+    addToMerged(agreementSources);
+    addToMerged(sharedCategories);
+    
+    // Sort by relevance: shared_issue > agreement_source > shared_category
+    const results = [...merged.values()];
+    results.sort((a, b) => {
+      const scoreA = a.relationshipTypes.includes('shared_issue') ? 3 : 
+                     a.relationshipTypes.includes('agreement_source') ? 2 : 1;
+      const scoreB = b.relationshipTypes.includes('shared_issue') ? 3 : 
+                     b.relationshipTypes.includes('agreement_source') ? 2 : 1;
+      return scoreB - scoreA;
+    });
+    
+    return results.slice(0, 10); // Limit to 10 related conversations
   },
 
   linkConversationToIssue: async (conversationId: string, issueId: string, reason?: string): Promise<void> => {
