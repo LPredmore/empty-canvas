@@ -468,6 +468,9 @@ export type Database = {
       }
       issue_people: {
         Row: {
+          contribution_description: string | null
+          contribution_type: string | null
+          contribution_valence: string | null
           created_at: string | null
           id: string
           involvement_type: string | null
@@ -476,6 +479,9 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          contribution_description?: string | null
+          contribution_type?: string | null
+          contribution_valence?: string | null
           created_at?: string | null
           id?: string
           involvement_type?: string | null
@@ -484,6 +490,9 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          contribution_description?: string | null
+          contribution_type?: string | null
+          contribution_valence?: string | null
           created_at?: string | null
           id?: string
           involvement_type?: string | null

@@ -7,6 +7,7 @@ import {
   AgreementSourceType, AgreementStatus, Role, ConversationStatus,
   TopicCategory, ConversationAnalysis, RelatedConversationDiscovery
 } from '../types';
+import { IssuePersonContribution } from '../types/analysisTypes';
 
 // --- SYSTEM INSTRUCTIONS ---
 export const COPARENTING_ASSISTANT_INSTRUCTIONS = `
@@ -256,7 +257,8 @@ export const api = {
     
     const inserts = personIds.map(personId => ({
       issue_id: issueId,
-      person_id: personId
+      person_id: personId,
+      contribution_type: 'involved'
     }));
     
     const { error } = await supabase
@@ -268,10 +270,41 @@ export const api = {
     }
   },
 
-  getPeopleForIssue: async (issueId: string): Promise<Person[]> => {
+  // NEW: Link people with contribution details
+  linkPeopleToIssueWithContributions: async (
+    issueId: string, 
+    contributions: IssuePersonContribution[]
+  ): Promise<void> => {
+    if (!contributions || contributions.length === 0) return;
+    
+    const inserts = contributions.map(c => ({
+      issue_id: issueId,
+      person_id: c.personId,
+      contribution_type: c.contributionType || 'involved',
+      contribution_description: c.contributionDescription,
+      contribution_valence: c.contributionValence
+    }));
+    
+    const { error } = await supabase
+      .from('issue_people')
+      .upsert(inserts, { 
+        onConflict: 'issue_id,person_id',
+        ignoreDuplicates: false // Update existing with new contribution details
+      });
+    
+    if (error) {
+      console.error('Error linking people with contributions:', error);
+    }
+  },
+
+  getPeopleForIssue: async (issueId: string): Promise<(Person & { 
+    contributionType?: string; 
+    contributionDescription?: string; 
+    contributionValence?: string;
+  })[]> => {
     const { data: links, error } = await supabase
       .from('issue_people')
-      .select('person_id')
+      .select('person_id, contribution_type, contribution_description, contribution_valence')
       .eq('issue_id', issueId);
     
     if (error || !links || links.length === 0) return [];
@@ -285,22 +318,33 @@ export const api = {
     
     if (peopleError || !people) return [];
     
-    return people.map(p => ({
-      id: p.id,
-      fullName: p.full_name,
-      role: p.role as Role,
-      roleContext: p.role_context,
-      email: p.email,
-      phone: p.phone,
-      avatarUrl: p.avatar_url,
-      notes: p.notes
-    }));
+    // Merge people with their contribution data
+    return people.map(p => {
+      const link = links.find(l => l.person_id === p.id);
+      return {
+        id: p.id,
+        fullName: p.full_name,
+        role: p.role as Role,
+        roleContext: p.role_context,
+        email: p.email,
+        phone: p.phone,
+        avatarUrl: p.avatar_url,
+        notes: p.notes,
+        contributionType: link?.contribution_type,
+        contributionDescription: link?.contribution_description,
+        contributionValence: link?.contribution_valence
+      };
+    });
   },
 
-  getIssuesForPersonDirect: async (personId: string): Promise<Issue[]> => {
+  getIssuesForPersonDirect: async (personId: string): Promise<(Issue & {
+    contributionType?: string;
+    contributionDescription?: string;
+    contributionValence?: string;
+  })[]> => {
     const { data: links, error } = await supabase
       .from('issue_people')
-      .select('issue_id')
+      .select('issue_id, contribution_type, contribution_description, contribution_valence')
       .eq('person_id', personId);
     
     if (error || !links || links.length === 0) return [];
@@ -314,14 +358,21 @@ export const api = {
     
     if (issueError || !issues) return [];
     
-    return issues.map(i => ({
-      id: i.id,
-      title: i.title,
-      description: i.description,
-      status: i.status,
-      priority: i.priority,
-      updatedAt: i.updated_at
-    }));
+    // Merge issues with their contribution data
+    return issues.map(i => {
+      const link = links.find(l => l.issue_id === i.id);
+      return {
+        id: i.id,
+        title: i.title,
+        description: i.description,
+        status: i.status,
+        priority: i.priority,
+        updatedAt: i.updated_at,
+        contributionType: link?.contribution_type,
+        contributionDescription: link?.contribution_description,
+        contributionValence: link?.contribution_valence
+      };
+    });
   },
 
   // --- Conversations ---

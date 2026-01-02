@@ -413,8 +413,10 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
           });
           createdIssueIds[issueAction.title] = newIssue.id;
           
-          // Link people to the new issue
-          if (issueAction.involvedPersonIds?.length > 0) {
+          // Link people to the new issue - prefer personContributions, fallback to involvedPersonIds
+          if (issueAction.personContributions && issueAction.personContributions.length > 0) {
+            await api.linkPeopleToIssueWithContributions(newIssue.id, issueAction.personContributions);
+          } else if (issueAction.involvedPersonIds && issueAction.involvedPersonIds.length > 0) {
             await api.linkPeopleToIssue(newIssue.id, issueAction.involvedPersonIds);
           }
           
@@ -433,8 +435,10 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             status: issueAction.status as any
           });
           
-          // Link additional people (upsert handles duplicates)
-          if (issueAction.involvedPersonIds?.length > 0) {
+          // Link additional people - prefer personContributions, fallback to involvedPersonIds
+          if (issueAction.personContributions && issueAction.personContributions.length > 0) {
+            await api.linkPeopleToIssueWithContributions(issueAction.issueId, issueAction.personContributions);
+          } else if (issueAction.involvedPersonIds && issueAction.involvedPersonIds.length > 0) {
             await api.linkPeopleToIssue(issueAction.issueId, issueAction.involvedPersonIds);
           }
           
