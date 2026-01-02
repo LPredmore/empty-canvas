@@ -45,7 +45,24 @@ Classify violations as:
 - **potential**: Behavior that may constitute a violation
 - **pattern**: Repeated behavior that collectively violates the spirit of the agreement
 
-### 4. Person Analyses (CRITICAL - Be Thorough)
+### 4. NEW AGREEMENT DETECTION (CRITICAL)
+Identify when participants reach MUTUAL AGREEMENT on operational matters during the conversation. Look for:
+- Schedule modifications ("Let's switch weekends this month")
+- Permission grants ("You can take them to the dentist")
+- Process changes ("I'll handle pickup on Tuesdays now")
+- Temporary arrangements ("While school is out, you can have them")
+- Role adjustments ("You can sign them up for soccer")
+
+For each detected agreement, determine:
+- The topic (matching existing agreement topics when applicable)
+- Whether it's temporary or ongoing
+- Any conditions mentioned
+- Which existing agreements it might override/modify
+- Your confidence level (based on clarity of mutual consent)
+
+IMPORTANT: Only flag as an agreement when there is CLEAR MUTUAL CONSENT from both parties. One-sided proposals or unacknowledged requests are NOT agreements.
+
+### 5. Person Analyses (CRITICAL - Be Thorough)
 For EACH participant, provide a comprehensive clinical assessment including:
 
 **Clinical Assessment:**
@@ -68,7 +85,7 @@ For EACH participant, provide a comprehensive clinical assessment including:
 - Observable behaviors that may be clinically relevant
 - NOT diagnoses, but factual observations a clinician would find useful
 
-### 5. Message Annotations
+### 6. Message Annotations
 Flag specific messages that contain:
 - Agreement violations
 - Concerning language or tactics
@@ -103,6 +120,19 @@ You MUST respond with valid JSON matching this exact structure:
       "description": "string",
       "messageIds": ["array of relevant message IDs"],
       "severity": "minor" | "moderate" | "severe"
+    }
+  ],
+  "detectedAgreements": [
+    {
+      "topic": "string - category of the agreement (e.g., 'parenting_time', 'medical', 'school')",
+      "summary": "string - brief description of what was agreed",
+      "fullText": "string - exact quotes from the conversation showing mutual consent",
+      "messageIds": ["array of message IDs where agreement was formed"],
+      "isTemporary": "boolean - whether this appears time-limited",
+      "conditionText": "string or null - any conditions mentioned",
+      "potentialOverrideTopics": ["array of existing agreement topics this might modify"],
+      "confidence": "high" | "medium" | "low",
+      "reasoning": "string - explanation of why this is considered an agreement"
     }
   ],
   "personAnalyses": [
@@ -151,6 +181,7 @@ You MUST respond with valid JSON matching this exact structure:
 - Focus on OBSERVABLE BEHAVIORS, not assumptions about intent
 - Consider the CHILDREN'S BEST INTEREST in all assessments
 - Be THOROUGH - this documentation may be used in court proceedings
+- For detected agreements, require CLEAR MUTUAL CONSENT - proposals and unacknowledged requests are NOT agreements
 - If there's insufficient data for a complete assessment, note what additional information would be helpful`;
 
 serve(async (req) => {
@@ -245,7 +276,12 @@ serve(async (req) => {
       throw new Error('AI response missing required fields');
     }
 
-    console.log(`Analysis complete: ${analysisResult.issueActions?.length || 0} issues, ${analysisResult.personAnalyses?.length || 0} person analyses`);
+    // Ensure detectedAgreements array exists
+    if (!analysisResult.detectedAgreements) {
+      analysisResult.detectedAgreements = [];
+    }
+
+    console.log(`Analysis complete: ${analysisResult.issueActions?.length || 0} issues, ${analysisResult.personAnalyses?.length || 0} person analyses, ${analysisResult.detectedAgreements?.length || 0} detected agreements`);
 
     return new Response(
       JSON.stringify(analysisResult),

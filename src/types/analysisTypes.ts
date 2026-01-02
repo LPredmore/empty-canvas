@@ -10,6 +10,19 @@ export interface ConversationAnalysisResult {
   agreementViolations: AgreementViolation[];
   personAnalyses: PersonAnalysisResult[];
   messageAnnotations: MessageAnnotation[];
+  detectedAgreements: DetectedAgreement[];
+}
+
+export interface DetectedAgreement {
+  topic: string;
+  summary: string;
+  fullText: string;
+  messageIds: string[];
+  isTemporary: boolean;
+  conditionText?: string;
+  potentialOverrideTopics: string[];
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string;
 }
 
 export interface IssueAction {
@@ -73,4 +86,5 @@ export interface AnalysisSummary {
   violationsDetected: number;
   peopleAnalyzed: number;
   keyFindings: string[];
+  agreementsDetected?: number;
 }
