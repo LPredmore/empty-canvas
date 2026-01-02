@@ -4,7 +4,7 @@ import {
   LegalDocument, LegalClause, Agreement, AgreementItem,
   AssistantSession, AssistantMessage, AssistantSenderType,
   PersonRelationship, ExtractedClause, ExtractedAgreement,
-  AgreementSourceType, AgreementStatus, Role
+  AgreementSourceType, AgreementStatus, Role, ConversationStatus
 } from '../types';
 
 // --- SYSTEM INSTRUCTIONS ---
@@ -337,7 +337,9 @@ export const api = {
       endedAt: c.ended_at,
       updatedAt: c.updated_at,
       previewText: c.preview_text || '',
-      participantIds: c.conversation_participants?.map((cp: any) => cp.person_id) || []
+      participantIds: c.conversation_participants?.map((cp: any) => cp.person_id) || [],
+      status: c.status || ConversationStatus.Open,
+      pendingResponderId: c.pending_responder_id
     })) : [];
   },
 
@@ -357,7 +359,9 @@ export const api = {
       endedAt: data.ended_at,
       updatedAt: data.updated_at,
       previewText: data.preview_text || '',
-      participantIds: data.conversation_participants?.map((cp: any) => cp.person_id) || []
+      participantIds: data.conversation_participants?.map((cp: any) => cp.person_id) || [],
+      status: data.status || ConversationStatus.Open,
+      pendingResponderId: data.pending_responder_id
     };
   },
 
@@ -401,7 +405,9 @@ export const api = {
       startedAt: convData.started_at,
       updatedAt: convData.updated_at,
       previewText: convData.preview_text || '',
-      participantIds: participantIds
+      participantIds: participantIds,
+      status: convData.status || ConversationStatus.Open,
+      pendingResponderId: convData.pending_responder_id
     };
   },
 
@@ -449,7 +455,9 @@ export const api = {
       endedAt: convData.ended_at,
       updatedAt: convData.updated_at,
       previewText: convData.preview_text || '',
-      participantIds: participantIds
+      participantIds: participantIds,
+      status: convData.status || ConversationStatus.Open,
+      pendingResponderId: convData.pending_responder_id
     };
   },
   
@@ -1477,6 +1485,107 @@ export const api = {
       createdAt: data.created_at,
       partyIds: []
     };
+  },
+
+  // --- Conversation Resolution ---
+  updateConversationStatus: async (
+    conversationId: string,
+    status: 'open' | 'resolved',
+    pendingResponderId?: string | null
+  ): Promise<void> => {
+    const updates: any = { status };
+    if (pendingResponderId !== undefined) {
+      updates.pending_responder_id = pendingResponderId;
+    }
+    const { error } = await supabase
+      .from('conversations')
+      .update(updates)
+      .eq('id', conversationId);
+    if (error) throw error;
+  },
+
+  getOpenConversations: async (): Promise<Conversation[]> => {
+    const data = await handleResponse(
+      supabase
+        .from('conversations')
+        .select('*, conversation_participants(person_id)')
+        .eq('status', 'open')
+        .order('ended_at', { ascending: true, nullsFirst: false })
+    );
+
+    return Array.isArray(data) ? data.map((c: any) => ({
+      id: c.id,
+      title: c.title,
+      sourceType: c.source_type,
+      startedAt: c.started_at,
+      endedAt: c.ended_at,
+      updatedAt: c.updated_at,
+      previewText: c.preview_text || '',
+      participantIds: c.conversation_participants?.map((cp: any) => cp.person_id) || [],
+      status: c.status || ConversationStatus.Open,
+      pendingResponderId: c.pending_responder_id
+    })) : [];
+  },
+
+  getStaleConversations: async (daysThreshold: number = 14): Promise<Array<Conversation & { daysSinceLastMessage: number; pendingResponderName?: string }>> => {
+    const thresholdDate = new Date();
+    thresholdDate.setDate(thresholdDate.getDate() - daysThreshold);
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*, conversation_participants(person_id), people!conversations_pending_responder_id_fkey(full_name)')
+      .eq('status', 'open')
+      .lt('ended_at', thresholdDate.toISOString())
+      .order('ended_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching stale conversations:', error);
+      return [];
+    }
+
+    return (data || []).map((c: any) => {
+      const endedAt = c.ended_at ? new Date(c.ended_at) : (c.started_at ? new Date(c.started_at) : new Date());
+      const daysSinceLastMessage = Math.floor((Date.now() - endedAt.getTime()) / (1000 * 60 * 60 * 24));
+      
+      return {
+        id: c.id,
+        title: c.title,
+        sourceType: c.source_type,
+        startedAt: c.started_at,
+        endedAt: c.ended_at,
+        updatedAt: c.updated_at,
+        previewText: c.preview_text || '',
+        participantIds: c.conversation_participants?.map((cp: any) => cp.person_id) || [],
+        status: c.status || ConversationStatus.Open,
+        pendingResponderId: c.pending_responder_id,
+        daysSinceLastMessage,
+        pendingResponderName: c.people?.full_name
+      };
+    });
+  },
+
+  getConversationsAwaitingPerson: async (personId: string): Promise<Conversation[]> => {
+    const data = await handleResponse(
+      supabase
+        .from('conversations')
+        .select('*, conversation_participants(person_id)')
+        .eq('status', 'open')
+        .eq('pending_responder_id', personId)
+        .order('ended_at', { ascending: true })
+    );
+
+    return Array.isArray(data) ? data.map((c: any) => ({
+      id: c.id,
+      title: c.title,
+      sourceType: c.source_type,
+      startedAt: c.started_at,
+      endedAt: c.ended_at,
+      updatedAt: c.updated_at,
+      previewText: c.preview_text || '',
+      participantIds: c.conversation_participants?.map((cp: any) => cp.person_id) || [],
+      status: c.status || ConversationStatus.Open,
+      pendingResponderId: c.pending_responder_id
+    })) : [];
   }
 
 };

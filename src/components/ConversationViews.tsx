@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
-import { Conversation, Message, Person, MessageDirection, Issue } from '../types';
-import { format, isSameDay, isSameMonth, isSameYear } from 'date-fns';
-import { Search, Filter, Paperclip, Send, Loader2, Tag, Plus, AlertCircle } from 'lucide-react';
+import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus } from '../types';
+import { format, isSameDay, isSameMonth, isSameYear, differenceInDays } from 'date-fns';
+import { Search, Filter, Paperclip, Send, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User } from 'lucide-react';
 
 const formatDateRange = (startedAt?: string, endedAt?: string): string => {
   if (!startedAt) return '';
@@ -25,10 +25,13 @@ const formatDateRange = (startedAt?: string, endedAt?: string): string => {
   return `${format(start, 'MMM d, yyyy')} – ${format(end, 'MMM d, yyyy')}`;
 };
 
+type StatusFilter = 'all' | 'open' | 'resolved';
+
 export const ConversationList: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   useEffect(() => {
     Promise.all([api.getConversations(), api.getPeople()])
@@ -40,6 +43,27 @@ export const ConversationList: React.FC = () => {
   }, []);
 
   if (loading) return <div className="flex p-8 justify-center"><Loader2 className="animate-spin text-indigo-600" /></div>;
+
+  const openCount = conversations.filter(c => c.status === ConversationStatus.Open).length;
+  const resolvedCount = conversations.filter(c => c.status === ConversationStatus.Resolved).length;
+
+  const filteredConversations = conversations.filter(conv => {
+    if (statusFilter === 'all') return true;
+    if (statusFilter === 'open') return conv.status === ConversationStatus.Open;
+    if (statusFilter === 'resolved') return conv.status === ConversationStatus.Resolved;
+    return true;
+  });
+
+  const getDaysSinceLastMessage = (conv: Conversation): number => {
+    const lastDate = conv.endedAt ? new Date(conv.endedAt) : (conv.startedAt ? new Date(conv.startedAt) : new Date());
+    return differenceInDays(new Date(), lastDate);
+  };
+
+  const getPendingResponderName = (conv: Conversation): string | null => {
+    if (!conv.pendingResponderId) return null;
+    const person = people.find(p => p.id === conv.pendingResponderId);
+    return person?.fullName || null;
+  };
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -60,18 +84,74 @@ export const ConversationList: React.FC = () => {
         </div>
       </div>
 
+      {/* Status Filter Tabs */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setStatusFilter('all')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            statusFilter === 'all' 
+              ? 'bg-indigo-100 text-indigo-700' 
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          All ({conversations.length})
+        </button>
+        <button
+          onClick={() => setStatusFilter('open')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+            statusFilter === 'open' 
+              ? 'bg-amber-100 text-amber-700' 
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          Open ({openCount})
+        </button>
+        <button
+          onClick={() => setStatusFilter('resolved')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+            statusFilter === 'resolved' 
+              ? 'bg-emerald-100 text-emerald-700' 
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          <CheckCircle2 className="w-4 h-4" />
+          Resolved ({resolvedCount})
+        </button>
+      </div>
+
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 divide-y divide-slate-100">
-        {conversations.map(conv => {
-           // Basic mapping of participant IDs to Person objects
+        {filteredConversations.map(conv => {
            const participants = people.filter(p => conv.participantIds.includes(p.id));
+           const daysSince = getDaysSinceLastMessage(conv);
+           const isStale = conv.status === ConversationStatus.Open && daysSince > 14;
+           const pendingName = getPendingResponderName(conv);
+           
            return (
-            <Link to={`/conversations/${conv.id}`} key={conv.id} className="block p-5 hover:bg-slate-50 transition-colors">
+            <Link 
+              to={`/conversations/${conv.id}`} 
+              key={conv.id} 
+              className={`block p-5 hover:bg-slate-50 transition-colors ${isStale ? 'border-l-4 border-l-red-400' : ''}`}
+            >
               <div className="flex justify-between items-start mb-1">
-                <h3 className="font-semibold text-slate-900">{conv.title}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-slate-900">{conv.title}</h3>
+                  {conv.status === ConversationStatus.Open ? (
+                    <span className="text-xs font-medium px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">
+                      Open
+                    </span>
+                  ) : (
+                    <span className="text-xs font-medium px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
+                      Resolved
+                    </span>
+                  )}
+                </div>
                 <span className="text-xs text-slate-500">{formatDateRange(conv.startedAt, conv.endedAt)}</span>
               </div>
+              
               <p className="text-sm text-slate-500 line-clamp-1 mb-2">{conv.previewText}</p>
-              <div className="flex items-center gap-2">
+              
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-medium px-2 py-0.5 bg-slate-100 text-slate-600 rounded uppercase tracking-wide">
                   {conv.sourceType}
                 </span>
@@ -88,11 +168,24 @@ export const ConversationList: React.FC = () => {
                 <span className="text-xs text-slate-400 ml-1">
                   with {participants.map(p => p.fullName).join(', ')}
                 </span>
+                
+                {conv.status === ConversationStatus.Open && pendingName && (
+                  <span className="text-xs text-amber-600 flex items-center gap-1 ml-auto">
+                    <User className="w-3 h-3" />
+                    Awaiting {pendingName}
+                  </span>
+                )}
+                
+                {isStale && (
+                  <span className="text-xs text-red-600 font-medium ml-auto">
+                    No response for {daysSince} days
+                  </span>
+                )}
               </div>
             </Link>
            );
         })}
-        {conversations.length === 0 && (
+        {filteredConversations.length === 0 && (
           <div className="p-6 text-center text-slate-500">No conversations found.</div>
         )}
       </div>
@@ -107,6 +200,7 @@ export const ConversationDetail: React.FC = () => {
   const [people, setPeople] = useState<Person[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
   
   // Tagging State
   const [taggingMsgId, setTaggingMsgId] = useState<string | null>(null);
@@ -135,25 +229,99 @@ export const ConversationDetail: React.FC = () => {
     try {
       await api.linkMessageToIssue(taggingMsgId, issueId);
       setTaggingMsgId(null);
-      loadData(); // Reload to show new tag
+      loadData();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleMarkResolved = async () => {
+    if (!conversation) return;
+    setUpdatingStatus(true);
+    try {
+      await api.updateConversationStatus(conversation.id, 'resolved', null);
+      loadData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handleReopen = async () => {
+    if (!conversation) return;
+    setUpdatingStatus(true);
+    try {
+      await api.updateConversationStatus(conversation.id, 'open', null);
+      loadData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 
   if (loading) return <div className="flex p-8 justify-center"><Loader2 className="animate-spin text-indigo-600" /></div>;
   if (!conversation) return <div>Conversation not found</div>;
 
+  const pendingResponder = conversation.pendingResponderId 
+    ? people.find(p => p.id === conversation.pendingResponderId) 
+    : null;
+
+  const daysSinceLastMessage = conversation.endedAt 
+    ? differenceInDays(new Date(), new Date(conversation.endedAt))
+    : 0;
+
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
       {/* Header */}
       <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
         <div>
-          <h2 className="font-bold text-slate-800">{conversation.title}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-bold text-slate-800">{conversation.title}</h2>
+            {conversation.status === ConversationStatus.Open ? (
+              <span className="text-xs font-medium px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Open
+              </span>
+            ) : (
+              <span className="text-xs font-medium px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" />
+                Resolved
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2 mt-1">
              <span className="text-xs font-medium px-2 py-0.5 bg-slate-200 text-slate-600 rounded uppercase">{conversation.sourceType}</span>
              <span className="text-xs text-slate-400">{messages.length} messages</span>
+             {conversation.status === ConversationStatus.Open && pendingResponder && (
+               <span className="text-xs text-amber-600 flex items-center gap-1">
+                 <User className="w-3 h-3" />
+                 Waiting on {pendingResponder.fullName} ({daysSinceLastMessage} days)
+               </span>
+             )}
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {conversation.status === ConversationStatus.Open ? (
+            <button
+              onClick={handleMarkResolved}
+              disabled={updatingStatus}
+              className="px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+            >
+              {updatingStatus ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              Mark as Resolved
+            </button>
+          ) : (
+            <button
+              onClick={handleReopen}
+              disabled={updatingStatus}
+              className="px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+            >
+              {updatingStatus ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
+              Reopen Conversation
+            </button>
+          )}
         </div>
       </div>
 

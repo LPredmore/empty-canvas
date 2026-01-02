@@ -64,7 +64,24 @@ For each detected agreement, determine:
 
 IMPORTANT: Only flag as an agreement when there is CLEAR MUTUAL CONSENT from both parties. One-sided proposals or unacknowledged requests are NOT agreements.
 
-### 5. Person Analyses (CRITICAL - Be Thorough)
+### 6. CONVERSATION STATE DETECTION (CRITICAL)
+Analyze the conversation flow to determine its resolution state. This is essential for tracking which conversations need follow-up.
+
+Examine the final 1-3 messages and determine:
+1. Is there a pending question, request, or action requiring a response?
+2. Who should respond based on:
+   - The receiver of the last substantive message
+   - Whether the last message contains a question or request
+   - Natural conversation flow
+
+DETECTION RULES:
+- If last message is a question directed at someone → status: "open", pendingResponderName = recipient name
+- If last message is a request for action/info → status: "open", pendingResponderName = recipient name  
+- If last message is acknowledgment (OK, Thanks, Got it) → status: "resolved"
+- If last message is a statement requiring no response → status: "resolved"
+- If conversation ends mid-discussion without conclusion → status: "open", pendingResponderName = last recipient
+
+### 7. Person Analyses (CRITICAL - Be Thorough)
 For EACH participant, provide a comprehensive clinical assessment including:
 
 **Clinical Assessment:**
@@ -87,7 +104,7 @@ For EACH participant, provide a comprehensive clinical assessment including:
 - Observable behaviors that may be clinically relevant
 - NOT diagnoses, but factual observations a clinician would find useful
 
-### 6. Message Annotations
+### 8. Message Annotations
 Flag specific messages that contain:
 - Agreement violations
 - Concerning language or tactics
@@ -102,6 +119,12 @@ You MUST respond with valid JSON matching this exact structure:
     "summary": "string - 2-3 paragraph summary",
     "overallTone": "cooperative" | "neutral" | "contentious" | "hostile",
     "keyTopics": ["string array of main topics"]
+  },
+  "conversationState": {
+    "status": "open" | "resolved",
+    "pendingResponderName": "string - Name of person who should respond next, or null if resolved",
+    "reasoning": "string - Brief explanation of why this state was determined",
+    "pendingActionSummary": "string - What response/action is expected, if any"
   },
   "issueActions": [
     {

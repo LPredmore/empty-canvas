@@ -15,6 +15,11 @@ export enum SourceType {
   Manual = 'Manual Note'
 }
 
+export enum ConversationStatus {
+  Open = 'open',
+  Resolved = 'resolved'
+}
+
 export enum MessageDirection {
   Inbound = 'inbound',
   Outbound = 'outbound',
@@ -86,6 +91,8 @@ export interface Conversation {
   updatedAt: string;
   participantIds: string[];
   previewText: string;
+  status: ConversationStatus;
+  pendingResponderId?: string;
 }
 
 export interface Message {

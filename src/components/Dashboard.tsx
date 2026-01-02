@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { IssueStatus, Conversation, Issue, Event } from '../types';
-import { ArrowRight, Clock, AlertTriangle, MessageSquareText, Calendar, Loader2, Plus, X, Save } from 'lucide-react';
+import { ArrowRight, Clock, AlertTriangle, MessageSquareText, Calendar, Loader2, Plus, X, Save, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { format } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
+
+interface StaleConversation extends Conversation {
+  daysSinceLastMessage: number;
+  pendingResponderName?: string;
+}
 
 export const Dashboard: React.FC = () => {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [staleConversations, setStaleConversations] = useState<StaleConversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
 
@@ -25,14 +31,16 @@ export const Dashboard: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [issuesData, convData, eventsData] = await Promise.all([
+      const [issuesData, convData, eventsData, staleData] = await Promise.all([
         api.getIssues(),
         api.getConversations(),
-        api.getEvents()
+        api.getEvents(),
+        api.getStaleConversations(14)
       ]);
       setIssues(issuesData);
       setConversations(convData);
       setEvents(eventsData);
+      setStaleConversations(staleData);
     } catch (error) {
       console.error("Failed to load dashboard data", error);
     } finally {
@@ -105,6 +113,37 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Stale Conversations Widget */}
+      {staleConversations.length > 0 && (
+        <section className="bg-red-50 rounded-xl shadow-sm border border-red-200 overflow-hidden">
+          <div className="p-6 border-b border-red-100 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+              <h2 className="font-semibold text-red-800">Stale Conversations ({staleConversations.length})</h2>
+            </div>
+            <Link to="/conversations" className="text-red-600 text-sm hover:underline flex items-center gap-1">
+              View all <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
+          <div className="divide-y divide-red-100">
+            {staleConversations.slice(0, 5).map(conv => (
+              <Link to={`/conversations/${conv.id}`} key={conv.id} className="block p-4 hover:bg-red-100/50 transition-colors">
+                <div className="flex justify-between items-start">
+                  <h4 className="font-medium text-slate-900">{conv.title}</h4>
+                  <span className="text-xs font-bold text-red-600">{conv.daysSinceLastMessage} days</span>
+                </div>
+                {conv.pendingResponderName && (
+                  <div className="flex items-center gap-1 mt-1 text-xs text-red-600">
+                    <User className="w-3 h-3" />
+                    Awaiting {conv.pendingResponderName}
+                  </div>
+                )}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Recent Conversations */}
