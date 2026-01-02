@@ -296,6 +296,7 @@ export const PersonDetail: React.FC = () => {
   const [notes, setNotes] = useState<ProfileNote[]>([]);
   const [involvedIssues, setInvolvedIssues] = useState<Issue[]>([]);
   const [relationships, setRelationships] = useState<(PersonRelationship & { relatedPerson?: Person })[]>([]);
+  const [allPeople, setAllPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'analysis'>('overview');
   
@@ -306,6 +307,13 @@ export const PersonDetail: React.FC = () => {
   const [creatingNote, setCreatingNote] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
+  // Add Relationship State
+  const [isRelModalOpen, setIsRelModalOpen] = useState(false);
+  const [relPersonId, setRelPersonId] = useState('');
+  const [relType, setRelType] = useState('');
+  const [relDescription, setRelDescription] = useState('');
+  const [creatingRel, setCreatingRel] = useState(false);
+
   useEffect(() => {
     if (!id) return;
     loadData();
@@ -314,7 +322,7 @@ export const PersonDetail: React.FC = () => {
   const loadData = async () => {
     if (!id) return;
     try {
-      const [p, allConv, n, allIssues, allEvents, allPeople, rels] = await Promise.all([
+      const [p, allConv, n, allIssues, allEvents, peopleList, rels] = await Promise.all([
         api.getPerson(id),
         api.getConversations(),
         api.getProfileNotes(id),
@@ -324,13 +332,14 @@ export const PersonDetail: React.FC = () => {
         api.getPersonRelationships(id)
       ]);
       setPerson(p);
+      setAllPeople(peopleList);
       setConversations(allConv.filter(c => c.participantIds.includes(id)));
       setNotes(n);
       
       // Enrich relationships with person data
       const enrichedRels = rels.map(rel => ({
         ...rel,
-        relatedPerson: allPeople.find(person => person.id === rel.relatedPersonId)
+        relatedPerson: peopleList.find(person => person.id === rel.relatedPersonId)
       }));
       setRelationships(enrichedRels);
       
@@ -391,6 +400,29 @@ export const PersonDetail: React.FC = () => {
      } finally {
         setAnalyzing(false);
      }
+  };
+
+  const handleCreateRelationship = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id || !relPersonId || !relType) return;
+    setCreatingRel(true);
+    try {
+      await api.createPersonRelationship({
+        personId: id,
+        relatedPersonId: relPersonId,
+        relationshipType: relType,
+        description: relDescription || undefined
+      });
+      setIsRelModalOpen(false);
+      setRelPersonId('');
+      setRelType('');
+      setRelDescription('');
+      loadData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCreatingRel(false);
+    }
   };
 
   if (loading) return <div className="flex p-8 justify-center"><Loader2 className="animate-spin text-indigo-600" /></div>;
@@ -507,9 +539,17 @@ export const PersonDetail: React.FC = () => {
 
             {/* Relationships Section */}
             <div className="space-y-4 lg:col-span-2">
-              <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-                <LinkIcon className="w-4 h-4" /> Relationships
-              </h3>
+              <div className="flex justify-between items-center">
+                <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                  <LinkIcon className="w-4 h-4" /> Relationships
+                </h3>
+                <button 
+                  onClick={() => setIsRelModalOpen(true)}
+                  className="flex items-center gap-1 text-xs font-medium bg-white border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  <Plus className="w-3 h-3" /> Add Relationship
+                </button>
+              </div>
               <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
                 {relationships.length === 0 ? (
                   <div className="p-4 text-slate-500 text-sm">No relationships defined.</div>
@@ -642,6 +682,72 @@ export const PersonDetail: React.FC = () => {
               <button type="submit" disabled={creatingNote} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {creatingNote ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Save Note
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Relationship Modal */}
+      {isRelModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-800">Add Relationship</h3>
+              <button onClick={() => setIsRelModalOpen(false)}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
+            </div>
+            <form onSubmit={handleCreateRelationship} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Person</label>
+                <select
+                  required
+                  value={relPersonId}
+                  onChange={e => setRelPersonId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                >
+                  <option value="">Select a person...</option>
+                  {allPeople.filter(p => p.id !== id).map(p => (
+                    <option key={p.id} value={p.id}>{p.fullName} ({p.role})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Relationship Type</label>
+                <select
+                  required
+                  value={relType}
+                  onChange={e => setRelType(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                >
+                  <option value="">Select relationship...</option>
+                  <option value="parent_of">Parent of</option>
+                  <option value="child_of">Child of</option>
+                  <option value="step_parent_of">Step-parent of</option>
+                  <option value="step_child_of">Step-child of</option>
+                  <option value="sibling_of">Sibling of</option>
+                  <option value="step_sibling_of">Step-sibling of</option>
+                  <option value="spouse_of">Spouse of</option>
+                  <option value="ex_spouse_of">Ex-spouse of</option>
+                  <option value="therapist_for">Therapist for</option>
+                  <option value="attorney_for">Attorney for</option>
+                  <option value="guardian_ad_litem_for">Guardian ad litem for</option>
+                  <option value="grandparent_of">Grandparent of</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description (optional)</label>
+                <input 
+                  type="text"
+                  value={relDescription} 
+                  onChange={e => setRelDescription(e.target.value)} 
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" 
+                  placeholder="e.g., Primary custody parent"
+                />
+              </div>
+              <button type="submit" disabled={creatingRel} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {creatingRel ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Add Relationship
               </button>
             </form>
           </div>
