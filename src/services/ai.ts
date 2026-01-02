@@ -7,8 +7,14 @@ import {
   Person, 
   ClarificationResult, 
   ConversationTurn,
-  DocumentExtractionResult
+  DocumentExtractionResult,
+  PDFProcessingInfo
 } from '../types';
+import { 
+  extractTextFromPDF, 
+  convertPDFPagesToImages, 
+  PDFExtractionResult 
+} from '../utils/pdfExtractor';
 import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
 
 // Re-export the parser types for external use
@@ -343,29 +349,82 @@ export async function clarifyPerson(
 }
 /**
  * Parse a legal document (parenting plan, court order, etc.) and extract all relevant information
+ * Uses two-path approach: text extraction for regular PDFs, Vision API for scanned documents
  */
 export async function parseLegalDocument(file: File): Promise<DocumentExtractionResult> {
-  let documentContent: string;
   const mimeType = file.type;
   const fileName = file.name;
 
-  // Convert file to appropriate format
-  if (mimeType.startsWith('image/')) {
-    // For images, use base64
-    documentContent = await fileToBase64(file);
-  } else {
-    // For text/PDF, extract text content
-    documentContent = await file.text();
-  }
-
   console.log(`Parsing legal document: ${fileName}, type: ${mimeType}`);
 
-  const { data, error } = await supabase.functions.invoke('parse-legal-document', {
-    body: {
-      documentContent,
-      fileName,
-      mimeType
+  let requestBody: any;
+  let processingPath: 'text' | 'vision' = 'text';
+  let pdfInfo: PDFExtractionResult | null = null;
+
+  // Handle different file types
+  if (mimeType === 'application/pdf') {
+    // Extract text from PDF using PDF.js
+    console.log('Extracting text from PDF...');
+    pdfInfo = await extractTextFromPDF(file);
+    
+    console.log(`PDF extraction complete: ${pdfInfo.extractedPages}/${pdfInfo.totalPages} pages, ` +
+      `${pdfInfo.estimatedTokens} estimated tokens, scanned: ${pdfInfo.isLikelyScanned}`);
+
+    if (pdfInfo.isLikelyScanned) {
+      // Use Vision API for scanned documents
+      console.log('Detected scanned PDF, converting to images for Vision API...');
+      processingPath = 'vision';
+      const { images, pageCount } = await convertPDFPagesToImages(file, 10);
+      
+      requestBody = {
+        images,
+        fileName,
+        mimeType,
+        totalPages: pageCount,
+        isScanned: true
+      };
+    } else {
+      // Use text content for regular PDFs
+      processingPath = 'text';
+      requestBody = {
+        documentContent: pdfInfo.totalText,
+        fileName,
+        mimeType,
+        totalPages: pdfInfo.totalPages,
+        extractedPages: pdfInfo.extractedPages,
+        wasTruncated: pdfInfo.extractedPages < pdfInfo.totalPages || 
+                      pdfInfo.estimatedTokens > 80000
+      };
     }
+  } else if (mimeType.startsWith('image/')) {
+    // For images, use Vision API directly
+    processingPath = 'vision';
+    const base64 = await fileToBase64(file);
+    requestBody = {
+      images: [base64],
+      fileName,
+      mimeType,
+      totalPages: 1,
+      isScanned: true
+    };
+  } else {
+    // For text files, read as text
+    processingPath = 'text';
+    const textContent = await file.text();
+    requestBody = {
+      documentContent: textContent,
+      fileName,
+      mimeType,
+      totalPages: 1,
+      extractedPages: 1,
+      wasTruncated: false
+    };
+  }
+
+  console.log(`Using ${processingPath} path for document processing`);
+
+  const { data, error } = await supabase.functions.invoke('parse-legal-document', {
+    body: requestBody
   });
 
   if (error) {
@@ -395,11 +454,21 @@ export async function parseLegalDocument(file: File): Promise<DocumentExtraction
     include: true
   }));
 
+  // Build processing info
+  const processingInfo: PDFProcessingInfo = {
+    processingPath,
+    totalPages: pdfInfo?.totalPages || 1,
+    extractedPages: pdfInfo?.extractedPages || 1,
+    wasTruncated: pdfInfo ? (pdfInfo.extractedPages < pdfInfo.totalPages) : false,
+    estimatedTokens: pdfInfo?.estimatedTokens
+  };
+
   return {
     metadata: data.metadata,
     extractedPeople: normalizedPeople,
     legalClauses: normalizedClauses,
-    operationalAgreements: normalizedAgreements
+    operationalAgreements: normalizedAgreements,
+    processingInfo
   };
 }
 
