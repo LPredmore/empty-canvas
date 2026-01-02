@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { generatePersonAnalysis, clarifyPerson } from '../services/ai';
-import { Person, Role, ProfileNote, Conversation, Issue, Event, ConversationTurn, SuggestedRelationship, PersonRelationship } from '../types';
-import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon, Pencil, Trash2 } from 'lucide-react';
+import { Person, Role, ProfileNote, Conversation, Issue, Event, ConversationTurn, SuggestedRelationship, PersonRelationship, ConversationStatus } from '../types';
+import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon, Pencil, Trash2, Clock } from 'lucide-react';
 import { ClarificationModal } from './ClarificationModal';
 
 export const PeopleList: React.FC = () => {
@@ -293,6 +293,7 @@ export const PersonDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [person, setPerson] = useState<Person | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [pendingConversations, setPendingConversations] = useState<Conversation[]>([]);
   const [notes, setNotes] = useState<ProfileNote[]>([]);
   const [involvedIssues, setInvolvedIssues] = useState<Issue[]>([]);
   const [relationships, setRelationships] = useState<(PersonRelationship & { relatedPerson?: Person })[]>([]);
@@ -332,17 +333,19 @@ export const PersonDetail: React.FC = () => {
   const loadData = async () => {
     if (!id) return;
     try {
-      const [p, allConv, n, linkedIssues, peopleList, rels] = await Promise.all([
+      const [p, allConv, n, linkedIssues, peopleList, rels, awaitingConv] = await Promise.all([
         api.getPerson(id),
         api.getConversations(),
         api.getProfileNotes(id),
         api.getIssuesForPersonDirect(id),
         api.getPeople(),
-        api.getPersonRelationships(id)
+        api.getPersonRelationships(id),
+        api.getConversationsAwaitingPerson(id)
       ]);
       setPerson(p);
       setAllPeople(peopleList);
       setConversations(allConv.filter(c => c.participantIds.includes(id)));
+      setPendingConversations(awaitingConv);
       setNotes(n);
       setInvolvedIssues(linkedIssues);
       
@@ -527,6 +530,47 @@ export const PersonDetail: React.FC = () => {
       <div className="min-h-[400px]">
         {activeTab === 'overview' ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Pending Responses Section */}
+            {pendingConversations.length > 0 && (
+              <div className="space-y-4 lg:col-span-2">
+                <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-500" /> 
+                  Pending Responses from {person.fullName}
+                  <span className="bg-amber-100 text-amber-700 text-xs font-medium px-2 py-0.5 rounded-full">
+                    {pendingConversations.length}
+                  </span>
+                </h3>
+                <div className="bg-amber-50 rounded-lg border border-amber-200 divide-y divide-amber-100">
+                  {pendingConversations.map(c => {
+                    const daysSince = c.endedAt 
+                      ? Math.floor((Date.now() - new Date(c.endedAt).getTime()) / (1000 * 60 * 60 * 24))
+                      : null;
+                    return (
+                      <Link to={`/conversations/${c.id}`} key={c.id} className="block p-4 hover:bg-amber-100/50 transition-colors">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="font-medium text-slate-800">{c.title}</div>
+                            <div className="text-xs text-slate-500 mt-1">{c.sourceType}</div>
+                          </div>
+                          {daysSince !== null && (
+                            <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                              daysSince > 14 
+                                ? 'bg-red-100 text-red-700' 
+                                : daysSince > 7 
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {daysSince === 0 ? 'Today' : daysSince === 1 ? '1 day ago' : `${daysSince} days ago`}
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-4">
               <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" /> Recent Conversations
