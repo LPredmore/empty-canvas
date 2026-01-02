@@ -513,10 +513,15 @@ function buildAnalysisPrompt(data: {
 }): string {
   const { conversationId, messages, participants, agreementItems, existingIssues, mePersonId } = data;
 
-  // Build participant context
+  // Build ID reference table (for JSON personId fields only)
+  const idReference = participants.map(p => 
+    `- ${p.fullName} → ${p.id}`
+  ).join('\n');
+
+  // Build participant context (names only, no IDs)
   const participantContext = participants.map(p => {
     const isMe = p.id === mePersonId;
-    return `- ${p.fullName} (ID: ${p.id}, Role: ${p.role}${isMe ? ' - THIS IS THE USER' : ''})${p.roleContext ? ` - Context: ${p.roleContext}` : ''}`;
+    return `- ${p.fullName} (Role: ${p.role}${isMe ? ' - THIS IS THE USER' : ''})${p.roleContext ? ` - Context: ${p.roleContext}` : ''}`;
   }).join('\n');
 
   // Build message context
@@ -547,6 +552,9 @@ ${m.rawText}`;
 
 **Conversation ID:** ${conversationId}
 
+### Person ID Reference (for JSON personId fields only - NEVER include UUIDs in text/prose fields):
+${idReference}
+
 ### Participants:
 ${participantContext}
 
@@ -561,11 +569,15 @@ ${issueContext}
 
 ---
 
-Please analyze this conversation following the 8-step workflow and produce the required JSON response. Remember:
+Please analyze this conversation following the 8-step workflow and produce the required JSON response.
+
+CRITICAL FORMATTING RULE: In ALL prose/text fields (summary, description, evidence, claimText, findingDescription, etc.), use participant NAMES ONLY. UUIDs must ONLY appear in personId-type JSON fields (speakerPersonId, attributedToPersonId, personId, involvedPersonIds, etc.).
+
+Remember:
 1. Build the Claims Ledger for any guidance/agreement claims
 2. Assess interaction quality for each participant
 3. Attribute all issues and flags to specific individuals with evidence
 4. Include alternative interpretations for Tier 1-2 findings
 5. Note any missing context that could change conclusions
-6. Ensure the summary includes specific behavioral findings with attribution`;
+6. Ensure the summary includes specific behavioral findings with attribution (using names, not IDs)`;
 }
