@@ -276,6 +276,7 @@ export type Database = {
           message_annotations: Json | null
           overall_tone: string
           summary: string
+          topic_category_slugs: Json | null
           user_id: string | null
         }
         Insert: {
@@ -287,6 +288,7 @@ export type Database = {
           message_annotations?: Json | null
           overall_tone: string
           summary: string
+          topic_category_slugs?: Json | null
           user_id?: string | null
         }
         Update: {
@@ -298,6 +300,7 @@ export type Database = {
           message_annotations?: Json | null
           overall_tone?: string
           summary?: string
+          topic_category_slugs?: Json | null
           user_id?: string | null
         }
         Relationships: []
@@ -888,6 +891,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      topic_categories: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          display_name: string
+          id: string
+          slug: string
+          sort_order: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          display_name: string
+          id?: string
+          slug: string
+          sort_order?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          display_name?: string
+          id?: string
+          slug?: string
+          sort_order?: number | null
+        }
+        Relationships: []
       }
     }
     Views: {

@@ -120,6 +120,7 @@ You MUST respond with valid JSON matching this exact structure:
     "overallTone": "cooperative" | "neutral" | "contentious" | "hostile",
     "keyTopics": ["string array of main topics"]
   },
+  "topicCategorySlugs": ["array of 1-5 category slugs from: decision_making, parenting_time, holiday_schedule, school, communication, financial, travel, right_of_first_refusal, exchange, medical, extracurricular, technology, third_party, dispute_resolution, modification, other"],
   "conversationState": {
     "status": "open" | "resolved",
     "pendingResponderName": "string - Name of person who should respond next, or null if resolved",
@@ -307,8 +308,13 @@ serve(async (req) => {
     if (!analysisResult.detectedAgreements) {
       analysisResult.detectedAgreements = [];
     }
+    
+    // Ensure topicCategorySlugs array exists
+    if (!analysisResult.topicCategorySlugs) {
+      analysisResult.topicCategorySlugs = [];
+    }
 
-    console.log(`Analysis complete: ${analysisResult.issueActions?.length || 0} issues, ${analysisResult.personAnalyses?.length || 0} person analyses, ${analysisResult.detectedAgreements?.length || 0} detected agreements`);
+    console.log(`Analysis complete: ${analysisResult.issueActions?.length || 0} issues, ${analysisResult.personAnalyses?.length || 0} person analyses, ${analysisResult.detectedAgreements?.length || 0} detected agreements, ${analysisResult.topicCategorySlugs?.length || 0} categories`);
 
     return new Response(
       JSON.stringify(analysisResult),

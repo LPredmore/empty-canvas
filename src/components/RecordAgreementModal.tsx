@@ -5,7 +5,7 @@ import {
   AgreementSourceType, 
   AgreementStatus, 
   AgreementItem,
-  AgreementCategory 
+  TopicCategory
 } from '../types';
 import { format } from 'date-fns';
 
@@ -41,25 +41,6 @@ const STATUS_OPTIONS: { value: AgreementStatus; label: string }[] = [
   { value: AgreementStatus.Disputed, label: 'Disputed' },
 ];
 
-const CATEGORY_OPTIONS: { value: AgreementCategory; label: string }[] = [
-  { value: 'parenting_time', label: 'Parenting Time' },
-  { value: 'communication', label: 'Communication' },
-  { value: 'decision_making', label: 'Decision Making' },
-  { value: 'holiday_schedule', label: 'Holiday Schedule' },
-  { value: 'school', label: 'School' },
-  { value: 'financial', label: 'Financial' },
-  { value: 'travel', label: 'Travel' },
-  { value: 'right_of_first_refusal', label: 'Right of First Refusal' },
-  { value: 'exchange', label: 'Exchange' },
-  { value: 'medical', label: 'Medical' },
-  { value: 'extracurricular', label: 'Extracurricular' },
-  { value: 'technology', label: 'Technology' },
-  { value: 'third_party', label: 'Third Party' },
-  { value: 'dispute_resolution', label: 'Dispute Resolution' },
-  { value: 'modification', label: 'Modification' },
-  { value: 'other', label: 'Other' },
-];
-
 const createEmptyItem = (): AgreementItemForm => ({
   id: crypto.randomUUID(),
   topic: '',
@@ -88,9 +69,21 @@ export const RecordAgreementModal: React.FC<RecordAgreementModalProps> = ({
   // Agreement items state
   const [items, setItems] = useState<AgreementItemForm[]>([createEmptyItem()]);
 
+  // Topic categories from database
+  const [topicCategories, setTopicCategories] = useState<TopicCategory[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+
   // UI state
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch categories on mount
+  useEffect(() => {
+    setLoadingCategories(true);
+    api.getTopicCategories()
+      .then(setTopicCategories)
+      .finally(() => setLoadingCategories(false));
+  }, []);
 
   // Reset form when modal opens
   useEffect(() => {
@@ -354,9 +347,13 @@ export const RecordAgreementModal: React.FC<RecordAgreementModalProps> = ({
                             className="w-full px-2 py-1.5 border border-input rounded-lg bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                           >
                             <option value="">Select topic...</option>
-                            {CATEGORY_OPTIONS.map(opt => (
-                              <option key={opt.value} value={opt.label}>{opt.label}</option>
-                            ))}
+                            {loadingCategories ? (
+                              <option disabled>Loading...</option>
+                            ) : (
+                              topicCategories.map(cat => (
+                                <option key={cat.slug} value={cat.displayName}>{cat.displayName}</option>
+                              ))
+                            )}
                           </select>
                         </div>
 
