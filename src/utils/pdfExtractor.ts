@@ -1,7 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// Set the worker source for PDF.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Set the worker source for PDF.js using Vite's bundled asset
+pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
 export interface PageText {
   pageNumber: number;
