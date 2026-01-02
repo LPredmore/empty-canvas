@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { chatWithAssistant, processStream } from '../services/ai';
 import { AssistantSession, AssistantMessage, AssistantSenderType } from '../types';
-import { Plus, Send, Paperclip, Bot, User, FileText, ArrowRight, Loader2, Trash2 } from 'lucide-react';
+import { Plus, Send, Paperclip, Bot, User, FileText, ArrowRight, Loader2, Trash2, Database } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 
@@ -30,6 +30,7 @@ export const AssistantView: React.FC = () => {
   const [sending, setSending] = useState(false);
   const [uploadingFile, setUploadingFile] = useState<File | null>(null);
   const [streamingContent, setStreamingContent] = useState('');
+  const [loadingContext, setLoadingContext] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,8 +120,8 @@ export const AssistantView: React.FC = () => {
       setInputText('');
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-      // Call the AI service
-      const result = await chatWithAssistant(targetSessionId, contentToSend, uploadingFile || undefined);
+      // Call the AI service with context loading callback
+      const result = await chatWithAssistant(targetSessionId, contentToSend, uploadingFile || undefined, setLoadingContext);
       
       if (result.error) {
         throw new Error(result.error);
@@ -215,7 +216,7 @@ export const AssistantView: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 px-2 py-1 bg-background border border-border rounded-lg text-[10px] font-bold text-muted-foreground uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            GPT-4o
+            GPT-4.1
           </div>
         </div>
 
@@ -286,9 +287,18 @@ export const AssistantView: React.FC = () => {
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                 <Bot className="w-5 h-5 text-primary animate-pulse" />
               </div>
-              <div className="bg-background border border-border px-4 py-3 rounded-2xl rounded-tl-none shadow-sm">
-                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                <span className="text-xs text-muted-foreground ml-2">Analyzing...</span>
+              <div className="bg-background border border-border px-4 py-3 rounded-2xl rounded-tl-none shadow-sm flex items-center gap-2">
+                {loadingContext ? (
+                  <>
+                    <Database className="w-4 h-4 animate-pulse text-primary" />
+                    <span className="text-xs text-muted-foreground">Loading relevant case data...</span>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Thinking...</span>
+                  </>
+                )}
               </div>
             </div>
           )}

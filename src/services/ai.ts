@@ -8,7 +8,14 @@ import {
   ClarificationResult, 
   ConversationTurn,
   DocumentExtractionResult,
-  PDFProcessingInfo
+  PDFProcessingInfo,
+  SourceType,
+  Conversation,
+  Message,
+  Issue,
+  AgreementItem,
+  ProfileNote,
+  PersonRelationship
 } from '../types';
 import { 
   extractTextFromPDF, 
@@ -28,6 +35,27 @@ export interface PersonAnalysis {
   concerns: string[];
   strategies: string[];
   monitoringPriorities: string[];
+}
+
+// Types for entity extraction
+interface ExtractedEntities {
+  mentionedPeopleIds: string[];
+  topicKeywords: string[];
+  needsRules: boolean;
+  needsConversations: boolean;
+  reasoning: string;
+}
+
+// Types for targeted context
+interface AssistantContext {
+  people: Person[];
+  relationships: PersonRelationship[];
+  profileNotes: ProfileNote[];
+  issues: Issue[];
+  conversations: Conversation[];
+  messages: Message[];
+  rules: AgreementItem[];
+  conversationAnalyses: any[];
 }
 
 /**
@@ -202,30 +230,439 @@ export async function generatePersonAnalysis(personId: string): Promise<PersonAn
 }
 
 /**
+ * Extract relevant entities from user message (Phase 1)
+ */
+async function extractRelevantEntities(
+  userMessage: string,
+  chatHistory: Array<{ role: string; content: string }>,
+  allPeople: Person[]
+): Promise<ExtractedEntities> {
+  try {
+    const { data, error } = await supabase.functions.invoke('chat-assistant', {
+      body: {
+        operation: 'extract-entities',
+        messages: [
+          ...chatHistory.slice(-4), // Include recent context
+          { role: 'user', content: userMessage }
+        ],
+        peopleList: allPeople.map(p => ({
+          id: p.id,
+          fullName: p.fullName,
+          role: p.role,
+          roleContext: p.roleContext
+        }))
+      }
+    });
+
+    if (error) throw error;
+    
+    // Validate response
+    if (!data || !Array.isArray(data.mentionedPeopleIds)) {
+      throw new Error('Invalid entity extraction response');
+    }
+    
+    return {
+      mentionedPeopleIds: data.mentionedPeopleIds || [],
+      topicKeywords: data.topicKeywords || [],
+      needsRules: data.needsRules ?? true,
+      needsConversations: data.needsConversations ?? true,
+      reasoning: data.reasoning || ''
+    };
+  } catch (err) {
+    console.warn('Entity extraction failed, falling back to full context:', err);
+    // Fallback: include everyone with "Me" role + all parents
+    const mePerson = allPeople.find(p => p.role === Role.Me);
+    const parentPeople = allPeople.filter(p => p.role === Role.Parent);
+    const fallbackIds = [
+      ...(mePerson ? [mePerson.id] : []),
+      ...parentPeople.map(p => p.id)
+    ];
+    
+    return {
+      mentionedPeopleIds: fallbackIds,
+      topicKeywords: [],
+      needsRules: true,
+      needsConversations: true,
+      reasoning: 'Fallback due to extraction error'
+    };
+  }
+}
+
+/**
+ * Load targeted context based on extracted entities (Phase 2)
+ */
+async function loadTargetedContext(
+  mentionedPeopleIds: string[],
+  options: { needsRules: boolean; needsConversations: boolean }
+): Promise<AssistantContext> {
+  // 1. Load mentioned people with full details
+  const peopleResults = await Promise.all(
+    mentionedPeopleIds.map(id => api.getPerson(id))
+  );
+  const people = peopleResults.filter((p): p is Person => p !== null);
+
+  // 2. Load relationships for mentioned people
+  const relationshipsArrays = await Promise.all(
+    mentionedPeopleIds.map(id => api.getPersonRelationships(id))
+  );
+  const relationships = relationshipsArrays.flat();
+
+  // 3. Load profile notes for mentioned people
+  const profileNotesArrays = await Promise.all(
+    mentionedPeopleIds.map(id => api.getProfileNotes(id))
+  );
+  const profileNotes = profileNotesArrays.flat();
+
+  // 4. Load issues linked to mentioned people
+  const issuesArrays = await Promise.all(
+    mentionedPeopleIds.map(id => api.getIssuesForPersonDirect(id))
+  );
+  const issuesMap = new Map<string, Issue>();
+  for (const issueList of issuesArrays) {
+    for (const issue of issueList) {
+      issuesMap.set(issue.id, issue);
+    }
+  }
+  const issues = Array.from(issuesMap.values());
+
+  // 5. Load conversations and messages if needed
+  let conversations: Conversation[] = [];
+  let messages: Message[] = [];
+  let conversationAnalyses: any[] = [];
+
+  if (options.needsConversations && mentionedPeopleIds.length > 0) {
+    // Get all conversations
+    const allConversations = await api.getConversations();
+    
+    // For each conversation, check if any mentioned person participated
+    const conversationCheckPromises = allConversations.slice(0, 20).map(async (conv) => {
+      const convMessages = await api.getMessages(conv.id);
+      const involvedPeopleIds = new Set<string>();
+      
+      for (const msg of convMessages) {
+        if (msg.senderId) involvedPeopleIds.add(msg.senderId);
+        if (msg.receiverId) involvedPeopleIds.add(msg.receiverId);
+      }
+      
+      const hasRelevantPerson = mentionedPeopleIds.some(id => involvedPeopleIds.has(id));
+      if (hasRelevantPerson) {
+        return { conv, messages: convMessages.slice(-20) }; // Last 20 messages per conversation
+      }
+      return null;
+    });
+
+    const results = await Promise.all(conversationCheckPromises);
+    const validResults = results.filter((r): r is { conv: Conversation; messages: Message[] } => r !== null);
+    
+    conversations = validResults.map(r => r.conv);
+    messages = validResults.flatMap(r => r.messages);
+
+    // Load analyses for relevant conversations
+    const analysisResults = await Promise.all(
+      conversations.slice(0, 10).map(c => api.getConversationAnalysis(c.id))
+    );
+    conversationAnalyses = analysisResults.filter(a => a !== null);
+  }
+
+  // 6. Load rules if needed
+  let rules: AgreementItem[] = [];
+  if (options.needsRules) {
+    rules = await api.getAllActiveAgreementItems();
+  }
+
+  return {
+    people,
+    relationships,
+    profileNotes,
+    issues,
+    conversations,
+    messages,
+    rules,
+    conversationAnalyses
+  };
+}
+
+/**
+ * Create a simple text stream for non-streaming responses
+ */
+function createTextStream(text: string): { stream: ReadableStream; error?: string } {
+  return {
+    stream: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`));
+        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+        controller.close();
+      }
+    })
+  };
+}
+
+/**
+ * Process analysis results from chat-based import (mirrors ImportWizard.processAnalysisResults)
+ */
+async function processAnalysisResultsFromChat(
+  conversationId: string,
+  analysis: any,
+  existingPeople: Person[]
+) {
+  // 1. Save conversation analysis
+  if (analysis.conversationAnalysis) {
+    await api.saveConversationAnalysis({
+      conversationId,
+      summary: analysis.conversationAnalysis.summary,
+      overallTone: analysis.conversationAnalysis.overallTone,
+      keyTopics: analysis.conversationAnalysis.keyTopics || [],
+      agreementViolations: analysis.agreementViolations || [],
+      messageAnnotations: analysis.messageAnnotations || []
+    });
+  }
+
+  // 2. Process issue actions
+  for (const issueAction of (analysis.issueActions || [])) {
+    try {
+      if (issueAction.action === 'create') {
+        const newIssue = await api.createIssue({
+          title: issueAction.title,
+          description: issueAction.description,
+          priority: issueAction.priority,
+          status: issueAction.status
+        });
+        
+        if (issueAction.involvedPersonIds?.length > 0) {
+          await api.linkPeopleToIssue(newIssue.id, issueAction.involvedPersonIds);
+        }
+        if (issueAction.linkedMessageIds?.length > 0) {
+          await api.linkMessagesToIssue(issueAction.linkedMessageIds, newIssue.id);
+        }
+        await api.linkConversationToIssue(conversationId, newIssue.id, issueAction.reasoning);
+      } else if (issueAction.action === 'update' && issueAction.issueId) {
+        await api.updateIssue(issueAction.issueId, {
+          description: issueAction.description,
+          priority: issueAction.priority,
+          status: issueAction.status
+        });
+      }
+    } catch (err) {
+      console.error('Failed to process issue action:', err);
+    }
+  }
+
+  // 3. Process person analyses -> profile notes
+  for (const personAnalysis of (analysis.personAnalyses || [])) {
+    try {
+      const noteContent = [
+        `## Clinical Assessment`,
+        personAnalysis.clinicalAssessment?.summary || '',
+        '',
+        `**Communication Style:** ${personAnalysis.clinicalAssessment?.communicationStyle || 'N/A'}`,
+        `**Emotional Regulation:** ${personAnalysis.clinicalAssessment?.emotionalRegulation || 'N/A'}`,
+        `**Boundary Respect:** ${personAnalysis.clinicalAssessment?.boundaryRespect || 'N/A'}`,
+        `**Co-parenting Cooperation:** ${personAnalysis.clinicalAssessment?.coparentingCooperation || 'N/A'}`,
+        '',
+        `## Strategic Notes`,
+        `**Observations:** ${personAnalysis.strategicNotes?.observations?.join('; ') || 'None'}`,
+        `**Patterns:** ${personAnalysis.strategicNotes?.patterns?.join('; ') || 'None'}`,
+        `**Strategies:** ${personAnalysis.strategicNotes?.strategies?.join('; ') || 'None'}`
+      ].join('\n');
+
+      await api.createProfileNote({
+        personId: personAnalysis.personId,
+        type: 'observation',
+        content: noteContent
+      });
+    } catch (err) {
+      console.error('Failed to create profile note:', err);
+    }
+  }
+}
+
+/**
+ * Handle file import within chat (uses full analysis pipeline)
+ */
+async function handleFileImportInChat(
+  sessionId: string,
+  file: File,
+  userContent: string
+): Promise<{ stream: ReadableStream | null; error?: string }> {
+  try {
+    // Step 1: Parse the file (same as ImportWizard)
+    const parsed = await parseFileWithAI(file);
+    
+    // Step 2: Match participants to existing people
+    const existingPeople = await api.getPeople();
+    const participantMappings: Array<{ originalName: string; personId: string | null; person: Person | null }> = [];
+    
+    for (const name of parsed.participants) {
+      // Fuzzy match logic
+      const nameLower = name.toLowerCase();
+      const match = existingPeople.find(p => {
+        const pNameLower = p.fullName.toLowerCase();
+        return pNameLower === nameLower ||
+               pNameLower.includes(nameLower) ||
+               nameLower.includes(pNameLower);
+      });
+      participantMappings.push({
+        originalName: name,
+        personId: match?.id || null,
+        person: match || null
+      });
+    }
+    
+    const unmatchedCount = participantMappings.filter(m => !m.personId).length;
+    
+    if (unmatchedCount > 0) {
+      // Cannot auto-import without full participant matching
+      const unmatchedNames = participantMappings.filter(m => !m.personId).map(m => m.originalName);
+      const warningMessage = `I found a conversation with ${parsed.messages.length} messages, but I couldn't match ${unmatchedCount} participant(s): ${unmatchedNames.join(', ')}. Please use the Import wizard from the Conversations page to manually map these participants.`;
+      
+      await api.saveAssistantMessage(sessionId, AssistantSenderType.Assistant, warningMessage);
+      return createTextStream(warningMessage);
+    }
+    
+    // Step 3: Build message data
+    const participantIds = participantMappings.map(m => m.personId!);
+    const messagesForImport = parsed.messages.map(m => {
+      const senderMatch = participantMappings.find(pm => 
+        pm.originalName.toLowerCase() === m.senderName.toLowerCase()
+      );
+      return {
+        senderId: senderMatch?.personId,
+        rawText: m.body,
+        sentAt: m.sentAt.toISOString(),
+        direction: m.direction
+      };
+    });
+    
+    // Step 4: Import conversation
+    const conversation = await api.importConversation(
+      {
+        title: parsed.title || `Imported ${new Date().toLocaleDateString()}`,
+        sourceType: SourceType.Manual,
+        startedAt: parsed.messages[0]?.sentAt?.toISOString(),
+        endedAt: parsed.lastDate?.toISOString()
+      },
+      participantIds,
+      messagesForImport
+    );
+    
+    // Step 5: Run FULL analysis pipeline (same as ImportWizard)
+    const savedMessages = await api.getMessages(conversation.id);
+    const formattedMessages = savedMessages.map(m => ({
+      id: m.id,
+      senderId: m.senderId || '',
+      receiverId: m.receiverId,
+      rawText: m.rawText,
+      sentAt: m.sentAt
+    }));
+    
+    // Get context for analysis
+    const [agreementItems, existingIssues, relationships] = await Promise.all([
+      api.getAllActiveAgreementItems(),
+      api.getIssues(),
+      Promise.all(participantIds.map(id => api.getPersonRelationships(id)))
+    ]);
+    
+    const participants = participantIds.map((id, idx) => {
+      const person = existingPeople.find(p => p.id === id);
+      const personRelationships = relationships[idx] || [];
+      return {
+        id,
+        fullName: person?.fullName || 'Unknown',
+        role: person?.role || 'Other',
+        roleContext: person?.roleContext,
+        relationships: personRelationships.map(r => ({
+          relatedPersonId: r.relatedPersonId,
+          relatedPersonName: existingPeople.find(p => p.id === r.relatedPersonId)?.fullName || 'Unknown',
+          relationshipType: r.relationshipType
+        }))
+      };
+    });
+    
+    const mePerson = existingPeople.find(p => p.role === Role.Me);
+    
+    // Call analyze-conversation-import
+    const { data: analysisResult, error: analysisError } = await supabase.functions.invoke('analyze-conversation-import', {
+      body: {
+        conversationId: conversation.id,
+        messages: formattedMessages,
+        participants,
+        agreementItems: agreementItems.map(item => ({
+          id: item.id,
+          topic: item.topic,
+          fullText: item.fullText,
+          summary: item.summary
+        })),
+        existingIssues: existingIssues.map(issue => ({
+          id: issue.id,
+          title: issue.title,
+          description: issue.description,
+          status: issue.status,
+          priority: issue.priority
+        })),
+        mePersonId: mePerson?.id || participantIds[0]
+      }
+    });
+    
+    // Step 6: Process analysis results
+    let analysisSummary = '';
+    if (!analysisError && analysisResult) {
+      await processAnalysisResultsFromChat(conversation.id, analysisResult, existingPeople);
+      
+      const created = analysisResult.issueActions?.filter((a: any) => a.action === 'create').length || 0;
+      const updated = analysisResult.issueActions?.filter((a: any) => a.action === 'update').length || 0;
+      const violations = analysisResult.agreementViolations?.length || 0;
+      
+      analysisSummary = `\n\nAnalysis complete:\n- Tone: ${analysisResult.conversationAnalysis?.overallTone || 'neutral'}\n- Issues created: ${created}\n- Issues updated: ${updated}\n- Violations detected: ${violations}`;
+    }
+    
+    const successMessage = `Successfully imported "${conversation.title}" with ${parsed.messages.length} messages from ${participantMappings.map(m => m.person?.fullName).join(', ')}.${analysisSummary}`;
+    
+    await api.saveAssistantMessage(sessionId, AssistantSenderType.Assistant, successMessage);
+    return createTextStream(successMessage);
+    
+  } catch (error: any) {
+    const errorMessage = `Import failed: ${error.message}`;
+    await api.saveAssistantMessage(sessionId, AssistantSenderType.Assistant, errorMessage);
+    return { stream: null, error: errorMessage };
+  }
+}
+
+/**
  * Chat with the AI assistant - returns a streaming response
+ * Uses three-phase approach: entity extraction → targeted loading → contextual chat
  */
 export async function chatWithAssistant(
   sessionId: string,
   userContent: string,
-  file?: File
+  file?: File,
+  onContextLoading?: (loading: boolean) => void
 ): Promise<{ stream: ReadableStream | null; error?: string }> {
   // Save the user message first
   await api.saveAssistantMessage(sessionId, AssistantSenderType.User, userContent);
 
-  // Prepare file data if provided
+  // Check for file import intent
+  if (file) {
+    const importKeywords = ['import', 'add this', 'save this', 'log this', 'upload this conversation'];
+    const wantsImport = importKeywords.some(kw => userContent.toLowerCase().includes(kw));
+    
+    if (wantsImport) {
+      return await handleFileImportInChat(sessionId, file, userContent);
+    }
+  }
+
+  // Prepare file data if provided (for context, not import)
   let fileData: { base64?: string; text?: string; images?: string[] } | undefined;
   if (file) {
     if (file.type.startsWith('image/')) {
       fileData = { base64: await fileToBase64(file) };
     } else if (file.type === 'application/pdf') {
-      // PDFs: use existing extraction infrastructure
       if (!isPdfWorkerReady()) {
         return { stream: null, error: 'PDF processor not ready. Please refresh and try again.' };
       }
       try {
         const pdfInfo = await extractTextFromPDF(file);
         if (pdfInfo.isLikelyScanned) {
-          const { images } = await convertPDFPagesToImages(file, 5); // Fewer pages for chat
+          const { images } = await convertPDFPagesToImages(file, 5);
           fileData = { images };
         } else {
           fileData = { text: pdfInfo.totalText };
@@ -240,11 +677,31 @@ export async function chatWithAssistant(
   }
 
   // Get conversation history for context
-  const messages = await api.getAssistantMessages(sessionId);
-  const chatMessages = messages.map((m: any) => ({
+  const historyMessages = await api.getAssistantMessages(sessionId);
+  const chatMessages = historyMessages.map((m: any) => ({
     role: m.senderType === AssistantSenderType.User ? 'user' : 'assistant',
     content: m.content
   }));
+
+  // PHASE 1: Extract relevant entities
+  onContextLoading?.(true);
+  const allPeople = await api.getPeople();
+  
+  const entities = await extractRelevantEntities(userContent, chatMessages, allPeople);
+  console.log('Entity extraction result:', entities);
+
+  // PHASE 2: Load targeted context
+  let context: AssistantContext | null = null;
+  
+  if (entities.mentionedPeopleIds.length > 0 || entities.needsRules) {
+    context = await loadTargetedContext(entities.mentionedPeopleIds, {
+      needsRules: entities.needsRules,
+      needsConversations: entities.needsConversations
+    });
+    console.log(`Loaded context: ${context.people.length} people, ${context.issues.length} issues, ${context.messages.length} messages, ${context.rules.length} rules`);
+  }
+  
+  onContextLoading?.(false);
 
   // Add file context to the latest message if provided
   if (fileData && chatMessages.length > 0) {
@@ -255,6 +712,14 @@ export async function chatWithAssistant(
         content: [
           { type: 'text', text: userContent },
           { type: 'image_url', image_url: { url: fileData.base64 } }
+        ]
+      };
+    } else if (fileData.images && fileData.images.length > 0) {
+      chatMessages[lastIdx] = {
+        role: 'user',
+        content: [
+          { type: 'text', text: userContent },
+          ...fileData.images.map(img => ({ type: 'image_url', image_url: { url: img } }))
         ]
       };
     } else if (fileData.text) {
@@ -272,7 +737,7 @@ export async function chatWithAssistant(
     return { stream: null, error: 'Not authenticated' };
   }
 
-  // Make streaming request directly to edge function
+  // PHASE 3: Make contextual chat request
   const response = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-assistant`,
     {
@@ -283,7 +748,8 @@ export async function chatWithAssistant(
       },
       body: JSON.stringify({
         operation: 'chat',
-        messages: chatMessages
+        messages: chatMessages,
+        context: context // Pass targeted context to edge function
       })
     }
   );
@@ -387,6 +853,7 @@ export async function clarifyPerson(
     suggestedRelationships: data.suggestedRelationships || []
   };
 }
+
 /**
  * Parse a legal document (parenting plan, court order, etc.) and extract all relevant information
  * Uses two-path approach: text extraction for regular PDFs, Vision API for scanned documents
