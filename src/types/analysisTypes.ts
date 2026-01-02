@@ -33,6 +33,7 @@ export interface IssueAction {
   priority: 'low' | 'medium' | 'high';
   status: string;
   linkedMessageIds: string[];
+  involvedPersonIds: string[];
   reasoning: string;
 }
 

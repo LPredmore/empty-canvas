@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
-import { Issue, Event, Message, IssueStatus, IssuePriority, LegalClause, AgreementItem } from '../types';
-import { CheckCircle2, Clock, AlertTriangle, Archive, ArrowUpCircle, Loader2, Plus, X, Scale, Handshake } from 'lucide-react';
+import { Issue, Event, Message, IssueStatus, IssuePriority, LegalClause, AgreementItem, Person } from '../types';
+import { CheckCircle2, Clock, AlertTriangle, Archive, ArrowUpCircle, Loader2, Plus, X, Scale, Handshake, Users } from 'lucide-react';
 import { format } from 'date-fns';
 
 export const IssueList: React.FC = () => {
@@ -132,6 +132,7 @@ export const IssueDetail: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [relatedRules, setRelatedRules] = useState<{clauses: LegalClause[], items: AgreementItem[]}>({clauses: [], items: []});
+  const [involvedPeople, setInvolvedPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -139,13 +140,15 @@ export const IssueDetail: React.FC = () => {
     Promise.all([
       api.getIssue(id),
       api.getEvents(id),
-      api.getMessages(), // filtering client side for prototype
-      api.getRulesForIssue(id)
-    ]).then(([i, e, m, rules]) => {
+      api.getMessages(),
+      api.getRulesForIssue(id),
+      api.getPeopleForIssue(id)
+    ]).then(([i, e, m, rules, people]) => {
       setIssue(i);
       setEvents(e);
       setMessages(m.filter(msg => msg.issueIds?.includes(id)));
       setRelatedRules(rules);
+      setInvolvedPeople(people);
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -220,6 +223,37 @@ export const IssueDetail: React.FC = () => {
 
         {/* Sidebar: Goals & Rules */}
         <div className="space-y-6">
+           {/* Involved People Section */}
+           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 p-4 border-b border-slate-200">
+                 <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                   <Users className="w-4 h-4" /> Involved People
+                 </h3>
+              </div>
+              <div className="p-4 space-y-3">
+                 {involvedPeople.map(person => (
+                   <Link 
+                     key={person.id} 
+                     to={`/people/${person.id}`} 
+                     className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 transition-colors"
+                   >
+                     <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-bold text-sm">
+                       {person.fullName.charAt(0)}
+                     </div>
+                     <div>
+                       <div className="font-medium text-slate-800">{person.fullName}</div>
+                       <div className="text-xs text-slate-500 capitalize">{person.role}</div>
+                     </div>
+                   </Link>
+                 ))}
+                 {involvedPeople.length === 0 && (
+                   <div className="text-slate-400 text-sm italic text-center py-2">
+                     No people linked to this issue.
+                   </div>
+                 )}
+              </div>
+           </div>
+
            {/* Relevant Rules Section */}
            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
               <div className="bg-slate-50 p-4 border-b border-slate-200">

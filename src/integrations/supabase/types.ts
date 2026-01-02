@@ -454,6 +454,48 @@ export type Database = {
           },
         ]
       }
+      issue_people: {
+        Row: {
+          created_at: string | null
+          id: string
+          involvement_type: string | null
+          issue_id: string
+          person_id: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          involvement_type?: string | null
+          issue_id: string
+          person_id: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          involvement_type?: string | null
+          issue_id?: string
+          person_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "issue_people_issue_id_fkey"
+            columns: ["issue_id"]
+            isOneToOne: false
+            referencedRelation: "issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "issue_people_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       issues: {
         Row: {
           description: string | null
