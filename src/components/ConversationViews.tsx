@@ -423,82 +423,85 @@ export const ConversationDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* Analysis Panel */}
-      <div className="px-4 pt-4">
-        <ConversationAnalysisPanel
-          conversationId={id!}
-          conversation={conversation}
-          analysis={analysis}
-          linkedIssues={linkedIssues}
-          issues={issues}
-          onRefreshAnalysis={handleRefreshAnalysis}
-          isRefreshing={refreshingAnalysis}
-        />
-      </div>
+      {/* Unified Scroll Container for Analysis + Messages */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Analysis Panel */}
+        <div className="px-4 pt-4 bg-white">
+          <ConversationAnalysisPanel
+            conversationId={id!}
+            conversation={conversation}
+            analysis={analysis}
+            linkedIssues={linkedIssues}
+            issues={issues}
+            onRefreshAnalysis={handleRefreshAnalysis}
+            isRefreshing={refreshingAnalysis}
+          />
+        </div>
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50">
-        {messages.map(msg => {
-          const isMe = msg.direction === MessageDirection.Outbound;
-          const isInternal = msg.direction === MessageDirection.Internal;
-          const sender = people.find(p => p.id === msg.senderId);
-          const linkedIssues = issues.filter(i => msg.issueIds?.includes(i.id));
+        {/* Messages Area */}
+        <div className="p-6 space-y-6 bg-slate-50 min-h-[200px]">
+          {messages.map(msg => {
+            const isMe = msg.direction === MessageDirection.Outbound;
+            const isInternal = msg.direction === MessageDirection.Internal;
+            const sender = people.find(p => p.id === msg.senderId);
+            const linkedIssues = issues.filter(i => msg.issueIds?.includes(i.id));
 
-          if (isInternal) {
-            return (
-              <div key={msg.id} className="flex justify-center">
-                <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-2 rounded-lg max-w-lg text-center shadow-sm">
-                  <span className="font-bold block text-xs uppercase tracking-wide text-amber-700/70 mb-1">Internal Note</span>
-                  {msg.rawText}
+            if (isInternal) {
+              return (
+                <div key={msg.id} className="flex justify-center">
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm px-4 py-2 rounded-lg max-w-lg text-center shadow-sm">
+                    <span className="font-bold block text-xs uppercase tracking-wide text-amber-700/70 mb-1">Internal Note</span>
+                    {msg.rawText}
+                  </div>
                 </div>
+              );
+            }
+
+            return (
+              <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                 <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      {!isMe && sender && (
+                        <span className="text-xs font-medium text-slate-500">{sender.fullName}</span>
+                      )}
+                      <span className="text-[10px] text-slate-400">{format(new Date(msg.sentAt), 'h:mm a')}</span>
+                    </div>
+                    
+                    <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed relative group ${
+                      isMe 
+                        ? 'bg-indigo-600 text-white rounded-br-none' 
+                        : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none'
+                    }`}>
+                      {msg.rawText}
+                      
+                      {/* Hover Action to Tag */}
+                      <button 
+                        onClick={() => setTaggingMsgId(msg.id)}
+                        className={`absolute -right-8 top-2 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-100 transition-opacity ${isMe ? 'text-white/50 hover:text-white' : 'text-slate-400 hover:text-indigo-600'}`}
+                        title="Tag Issue"
+                      >
+                        <Tag className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Display Linked Issues */}
+                    {linkedIssues.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {linkedIssues.map(issue => (
+                          <span key={issue.id} className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-full flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> {issue.title}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                 </div>
               </div>
             );
-          }
-
-          return (
-            <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-               <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    {!isMe && sender && (
-                      <span className="text-xs font-medium text-slate-500">{sender.fullName}</span>
-                    )}
-                    <span className="text-[10px] text-slate-400">{format(new Date(msg.sentAt), 'h:mm a')}</span>
-                  </div>
-                  
-                  <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed relative group ${
-                    isMe 
-                      ? 'bg-indigo-600 text-white rounded-br-none' 
-                      : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none'
-                  }`}>
-                    {msg.rawText}
-                    
-                    {/* Hover Action to Tag */}
-                    <button 
-                      onClick={() => setTaggingMsgId(msg.id)}
-                      className={`absolute -right-8 top-2 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-100 transition-opacity ${isMe ? 'text-white/50 hover:text-white' : 'text-slate-400 hover:text-indigo-600'}`}
-                      title="Tag Issue"
-                    >
-                      <Tag className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* Display Linked Issues */}
-                  {linkedIssues.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {linkedIssues.map(issue => (
-                        <span key={issue.id} className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-full flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> {issue.title}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-               </div>
-            </div>
-          );
-        })}
-        {messages.length === 0 && (
-          <div className="text-center text-slate-400 py-10">No messages in this conversation yet.</div>
-        )}
+          })}
+          {messages.length === 0 && (
+            <div className="text-center text-slate-400 py-10">No messages in this conversation yet.</div>
+          )}
+        </div>
       </div>
 
       {/* Input Area (Mock) */}
