@@ -223,10 +223,11 @@ serve(async (req) => {
       participants,
       agreementItems,
       existingIssues,
-      mePersonId
+      mePersonId,
+      isReanalysis = false
     } = await req.json();
 
-    console.log(`Analyzing conversation ${conversationId} with ${messages?.length || 0} messages`);
+    console.log(`Analyzing conversation ${conversationId} with ${messages?.length || 0} messages (reanalysis: ${isReanalysis})`);
 
     if (!messages || messages.length === 0) {
       return new Response(
