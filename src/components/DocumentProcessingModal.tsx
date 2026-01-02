@@ -602,15 +602,7 @@ export function DocumentProcessingModal({
 }
 
 // Person Card Component with Create/Link/Skip options
-function PersonCard({
-  person,
-  index,
-  existingPeople,
-  onActionChange,
-  onLinkChange,
-  onRoleChange,
-  onContextChange
-}: {
+interface PersonCardProps {
   person: ExtractedPersonWithAction;
   index: number;
   existingPeople: Person[];
@@ -618,7 +610,17 @@ function PersonCard({
   onLinkChange: (index: number, personId: string) => void;
   onRoleChange: (index: number, role: Role) => void;
   onContextChange: (index: number, context: string) => void;
-}) {
+}
+
+const PersonCard: React.FC<PersonCardProps> = ({
+  person,
+  index,
+  existingPeople,
+  onActionChange,
+  onLinkChange,
+  onRoleChange,
+  onContextChange
+}) => {
   const [showLinkDropdown, setShowLinkDropdown] = useState(false);
   const [linkSearch, setLinkSearch] = useState('');
   
