@@ -77,6 +77,22 @@ export function DocumentProcessingModal({
   const [additionalQuery, setAdditionalQuery] = useState('');
   const [isSearchingMore, setIsSearchingMore] = useState(false);
 
+  // Count statistics - must be before early return to maintain hook order
+  const peopleToCreate = people.filter(p => p.action === 'create').length;
+  const peopleToLink = people.filter(p => p.action === 'link').length;
+  const peopleToSkip = people.filter(p => p.action === 'skip').length;
+  const selectedAgreementsCount = agreements.filter(a => a.include).length;
+
+  // Group agreements by category for display - must be before early return
+  const agreementsByCategory: Record<string, (ExtractedAgreement & { originalIndex: number })[]> = useMemo(() => {
+    return agreements.reduce((acc, agreement, index) => {
+      const cat = agreement.category || 'other';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push({ ...agreement, originalIndex: index });
+      return acc;
+    }, {} as Record<string, (ExtractedAgreement & { originalIndex: number })[]>);
+  }, [agreements]);
+
   // Apply automatic matching when extraction result changes
   useEffect(() => {
     if (extractionResult) {
@@ -219,22 +235,6 @@ export function DocumentProcessingModal({
       agreements: agreements.filter(a => a.include)
     });
   };
-
-  // Count statistics
-  const peopleToCreate = people.filter(p => p.action === 'create').length;
-  const peopleToLink = people.filter(p => p.action === 'link').length;
-  const peopleToSkip = people.filter(p => p.action === 'skip').length;
-  const selectedAgreementsCount = agreements.filter(a => a.include).length;
-
-  // Group agreements by category for display
-  const agreementsByCategory: Record<string, (ExtractedAgreement & { originalIndex: number })[]> = useMemo(() => {
-    return agreements.reduce((acc, agreement, index) => {
-      const cat = agreement.category || 'other';
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push({ ...agreement, originalIndex: index });
-      return acc;
-    }, {} as Record<string, (ExtractedAgreement & { originalIndex: number })[]>);
-  }, [agreements]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
