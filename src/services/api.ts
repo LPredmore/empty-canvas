@@ -1051,6 +1051,93 @@ export const api = {
     return { agreement, items: agreementItems };
   },
 
+  createManualAgreement: async (
+    agreementData: {
+      title: string;
+      description?: string;
+      sourceType: AgreementSourceType;
+      sourceReference?: string;
+      status: AgreementStatus;
+      agreedDate?: string;
+    },
+    items: Array<{
+      topic: string;
+      fullText: string;
+      summary?: string;
+      overridesItemId?: string;
+      contingencyCondition?: string;
+    }>
+  ): Promise<{ agreement: Agreement; items: AgreementItem[] }> => {
+    // Create parent agreement
+    const { data: agreeResult, error: agreementError } = await supabase
+      .from('agreements')
+      .insert({
+        title: agreementData.title,
+        description: agreementData.description,
+        source_type: agreementData.sourceType,
+        source_reference: agreementData.sourceReference,
+        status: agreementData.status,
+        agreed_date: agreementData.agreedDate ? new Date(agreementData.agreedDate).toISOString() : null
+      })
+      .select()
+      .single();
+    
+    if (agreementError) throw agreementError;
+    
+    const agreement: Agreement = {
+      id: agreeResult.id,
+      title: agreeResult.title,
+      description: agreeResult.description,
+      sourceType: agreeResult.source_type,
+      sourceReference: agreeResult.source_reference,
+      agreedDate: agreeResult.agreed_date,
+      status: agreeResult.status,
+      createdAt: agreeResult.created_at,
+      partyIds: []
+    };
+    
+    // Create agreement items
+    if (items.length === 0) {
+      return { agreement, items: [] };
+    }
+    
+    const itemInserts = items.map((item, idx) => ({
+      agreement_id: agreement.id,
+      item_ref: `manual-${idx + 1}`,
+      topic: item.topic,
+      full_text: item.fullText,
+      summary: item.summary,
+      is_active: true,
+      overrides_item_id: item.overridesItemId || null,
+      override_status: item.overridesItemId ? 'active' : null,
+      contingency_condition: item.contingencyCondition || null,
+      detected_at: new Date().toISOString()
+    }));
+    
+    const { data: itemsResult, error: itemsError } = await supabase
+      .from('agreement_items')
+      .insert(itemInserts)
+      .select();
+    
+    if (itemsError) throw itemsError;
+    
+    const agreementItems: AgreementItem[] = (itemsResult || []).map((i: any) => ({
+      id: i.id,
+      agreementId: i.agreement_id,
+      itemRef: i.item_ref,
+      topic: i.topic,
+      fullText: i.full_text,
+      summary: i.summary,
+      isActive: i.is_active,
+      overridesItemId: i.overrides_item_id,
+      overrideStatus: i.override_status,
+      contingencyCondition: i.contingency_condition,
+      detectedAt: i.detected_at
+    }));
+    
+    return { agreement, items: agreementItems };
+  },
+
   createPeopleBulk: async (people: Array<{ name: string; role: Role; context: string }>): Promise<Person[]> => {
     if (people.length === 0) return [];
     
