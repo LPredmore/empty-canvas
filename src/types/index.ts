@@ -218,11 +218,20 @@ export interface DocumentExtractionMetadata {
   signedDate?: string;
 }
 
+export interface PDFProcessingInfo {
+  processingPath: 'text' | 'vision';
+  totalPages: number;
+  extractedPages: number;
+  wasTruncated: boolean;
+  estimatedTokens?: number;
+}
+
 export interface DocumentExtractionResult {
   metadata: DocumentExtractionMetadata;
   extractedPeople: ExtractedPerson[];
   legalClauses: ExtractedClause[];
   operationalAgreements: ExtractedAgreement[];
+  processingInfo?: PDFProcessingInfo;
 }
 
 export enum AgreementStatus {

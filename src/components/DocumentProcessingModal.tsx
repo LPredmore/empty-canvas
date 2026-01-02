@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, FileText, Users, Scale, FileCheck, ChevronRight, Loader2, Check, AlertCircle } from 'lucide-react';
+import { X, FileText, Users, Scale, FileCheck, ChevronRight, Loader2, Check, AlertCircle, Info, Eye, Image } from 'lucide-react';
 import { 
   DocumentExtractionResult, 
   ExtractedPerson, 
@@ -7,7 +7,8 @@ import {
   ExtractedAgreement,
   Role,
   LegalDocumentType,
-  AgreementCategory
+  AgreementCategory,
+  PDFProcessingInfo
 } from '../types';
 
 interface DocumentProcessingModalProps {
@@ -210,6 +211,37 @@ export function DocumentProcessingModal({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Processing Info Banner */}
+        {currentStep !== 'processing' && extractionResult?.processingInfo && (
+          <div className="px-4 py-2 bg-muted/50 border-b border-border">
+            <div className="flex items-center gap-2 text-sm">
+              {extractionResult.processingInfo.processingPath === 'vision' ? (
+                <Image className="w-4 h-4 text-amber-500" />
+              ) : (
+                <FileText className="w-4 h-4 text-blue-500" />
+              )}
+              <span className="text-muted-foreground">
+                Processed as: <span className="font-medium text-foreground">
+                  {extractionResult.processingInfo.processingPath === 'vision' ? 'Scanned Document (Vision)' : 'Text Document'}
+                </span>
+              </span>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">
+                {extractionResult.processingInfo.extractedPages} of {extractionResult.processingInfo.totalPages} pages
+              </span>
+              {extractionResult.processingInfo.wasTruncated && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="flex items-center gap-1 text-amber-600">
+                    <Info className="w-3 h-3" />
+                    Truncated for processing
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Progress Indicator */}
         {currentStep !== 'processing' && (

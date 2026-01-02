@@ -178,37 +178,60 @@ serve(async (req) => {
   }
 
   try {
-    const { documentContent, fileName, mimeType } = await req.json();
+    const body = await req.json();
+    const { 
+      documentContent, 
+      images, 
+      fileName, 
+      mimeType, 
+      totalPages,
+      extractedPages,
+      wasTruncated,
+      isScanned 
+    } = body;
 
-    if (!documentContent) {
-      throw new Error('Document content is required');
+    if (!documentContent && !images) {
+      throw new Error('Document content or images are required');
     }
 
-    console.log(`Processing legal document: ${fileName}, type: ${mimeType}`);
+    console.log(`Processing legal document: ${fileName}, type: ${mimeType}, scanned: ${isScanned || false}`);
+    if (totalPages) {
+      console.log(`Total pages: ${totalPages}, extracted: ${extractedPages || 'N/A'}, truncated: ${wasTruncated || false}`);
+    }
 
     let userContent: any[];
     
-    // Handle different content types
-    if (mimeType?.startsWith('image/')) {
-      // Image-based document (scanned PDF pages, photos)
-      userContent = [
-        {
-          type: 'text',
-          text: `Analyze this legal document image and extract all information according to your instructions. File: ${fileName}`
-        },
-        {
-          type: 'image_url',
-          image_url: {
-            url: documentContent.startsWith('data:') ? documentContent : `data:${mimeType};base64,${documentContent}`
-          }
+    if (images && Array.isArray(images) && images.length > 0) {
+      // Multi-image content for scanned PDFs
+      console.log(`Processing ${images.length} page images via Vision API...`);
+      
+      const imageContents = images.map((img: string, idx: number) => ({
+        type: 'image_url',
+        image_url: {
+          url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`
         }
-      ];
-    } else {
-      // Text-based content
+      }));
+
       userContent = [
         {
           type: 'text',
-          text: `Analyze this legal document and extract all information according to your instructions.
+          text: `Analyze this legal document (${images.length} page${images.length > 1 ? 's' : ''}) and extract all information according to your instructions. File: ${fileName}${totalPages && totalPages > images.length ? ` (Note: Document has ${totalPages} pages total, only first ${images.length} are shown)` : ''}`
+        },
+        ...imageContents
+      ];
+    } else if (documentContent) {
+      // Text-based content
+      console.log(`Processing text content (${documentContent.length} chars)...`);
+      
+      let contextNote = '';
+      if (wasTruncated) {
+        contextNote = `\n\nNOTE: This document has been truncated for processing. Original document has ${totalPages} pages, but only ${extractedPages} pages are included below. Extract as much information as possible from the available content.`;
+      }
+
+      userContent = [
+        {
+          type: 'text',
+          text: `Analyze this legal document and extract all information according to your instructions.${contextNote}
 
 Document: ${fileName}
 
@@ -216,6 +239,8 @@ Content:
 ${documentContent}`
         }
       ];
+    } else {
+      throw new Error('Invalid request: no content provided');
     }
 
     console.log('Calling OpenRouter API for document analysis...');
@@ -250,7 +275,22 @@ ${documentContent}`
         );
       }
       
-      throw new Error(`API error: ${response.status}`);
+      // Parse error for more helpful message
+      let errorMessage = `API error: ${response.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.error?.message) {
+          if (errorJson.error.message.includes('context length')) {
+            errorMessage = 'Document is too large to process. Please try a shorter document or contact support.';
+          } else {
+            errorMessage = errorJson.error.message;
+          }
+        }
+      } catch {
+        // Keep default error message
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
