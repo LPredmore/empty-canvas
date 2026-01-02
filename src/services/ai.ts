@@ -352,11 +352,30 @@ export async function clarifyPerson(
  * Parse a legal document (parenting plan, court order, etc.) and extract all relevant information
  * Uses two-path approach: text extraction for regular PDFs, Vision API for scanned documents
  */
-export async function parseLegalDocument(file: File): Promise<DocumentExtractionResult> {
+/**
+ * Options for parsing legal documents
+ */
+export interface ParseLegalDocumentOptions {
+  existingPeople?: Person[];  // Existing people to match against
+  additionalQuery?: string;   // Optional query for targeted re-extraction
+}
+
+/**
+ * Parse a legal document using AI
+ * Accepts optional existing people for matching and additional query for re-extraction
+ */
+export async function parseLegalDocument(
+  file: File,
+  options: ParseLegalDocumentOptions = {}
+): Promise<DocumentExtractionResult> {
+  const { existingPeople, additionalQuery } = options;
   const mimeType = file.type;
   const fileName = file.name;
 
   console.log(`Parsing legal document: ${fileName}, type: ${mimeType}`);
+  if (existingPeople?.length) {
+    console.log(`Passing ${existingPeople.length} existing people for matching`);
+  }
 
   let requestBody: any;
   let processingPath: 'text' | 'vision' = 'text';
@@ -441,6 +460,21 @@ export async function parseLegalDocument(file: File): Promise<DocumentExtraction
     };
   }
 
+  // Add existing people for matching if provided
+  if (existingPeople && existingPeople.length > 0) {
+    requestBody.existingPeople = existingPeople.map(p => ({
+      id: p.id,
+      name: p.fullName,
+      role: p.role,
+      roleContext: p.roleContext
+    }));
+  }
+
+  // Add additional query for targeted re-extraction
+  if (additionalQuery) {
+    requestBody.additionalQuery = additionalQuery;
+  }
+
   console.log(`Using ${processingPath} path for document processing`);
 
   const { data, error } = await supabase.functions.invoke('parse-legal-document', {
@@ -463,11 +497,8 @@ export async function parseLegalDocument(file: File): Promise<DocumentExtraction
     includeInCreation: true
   }));
 
-  // Mark all clauses and agreements as included by default
-  const normalizedClauses = (data.legalClauses || []).map((clause: any) => ({
-    ...clause,
-    include: true
-  }));
+  // Clauses are deprecated - always return empty array
+  const normalizedClauses: any[] = [];
 
   const normalizedAgreements = (data.operationalAgreements || []).map((agreement: any) => ({
     ...agreement,
@@ -488,7 +519,8 @@ export async function parseLegalDocument(file: File): Promise<DocumentExtraction
     extractedPeople: normalizedPeople,
     legalClauses: normalizedClauses,
     operationalAgreements: normalizedAgreements,
-    processingInfo
+    processingInfo,
+    partyNameMap: data.partyNameMap || {}
   };
 }
 

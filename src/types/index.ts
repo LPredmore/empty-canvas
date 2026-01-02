@@ -186,18 +186,32 @@ export type AgreementCategory =
 export interface ExtractedPerson {
   name: string;
   suggestedRole: Role;
-  context: string;
-  includeInCreation?: boolean;
+  context: string;              // Now includes specific relationship info (e.g., "biological mother of: Bryant, Brylee")
+  includeInCreation?: boolean;  // Deprecated - use ExtractedPersonWithAction.action instead
   editedRole?: Role;
   editedContext?: string;
+  suggestedExistingPersonId?: string;  // If AI recognized this person exists
 }
 
+// ExtractedClause is deprecated - we now use only operationalAgreements
+// Keeping for backwards compatibility but not used in new extraction flow
 export interface ExtractedClause {
   clauseRef: string;
   topic: string;
   fullText: string;
   summary: string;
   include?: boolean;
+}
+
+// Action type for person extraction - whether to create new, link to existing, or skip
+export type PersonExtractionAction = 'create' | 'link' | 'skip';
+
+// Extended extracted person with matching capabilities
+export interface ExtractedPersonWithAction extends ExtractedPerson {
+  action: PersonExtractionAction;
+  linkedPersonId?: string;  // Set when action is 'link'
+  matchScore?: number;      // Fuzzy match confidence 0-1
+  suggestedMatchId?: string; // AI or fuzzy match suggested existing person
 }
 
 export interface ExtractedAgreement {
@@ -229,9 +243,10 @@ export interface PDFProcessingInfo {
 export interface DocumentExtractionResult {
   metadata: DocumentExtractionMetadata;
   extractedPeople: ExtractedPerson[];
-  legalClauses: ExtractedClause[];
+  legalClauses: ExtractedClause[];  // Deprecated - kept for backwards compatibility, will be empty in new extractions
   operationalAgreements: ExtractedAgreement[];
   processingInfo?: PDFProcessingInfo;
+  partyNameMap?: Record<string, string>;  // Maps generic terms (Mother, Father) to actual names
 }
 
 export enum AgreementStatus {

@@ -10,10 +10,23 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL = 'openai/gpt-4o';
 
-const SYSTEM_PROMPT = `You are a legal document analyst specializing in family law. Your task is to extract ALL relevant information from legal documents (parenting plans, custody orders, court orders, stipulations, etc.).
+// Build the system prompt dynamically based on existing people
+function buildSystemPrompt(existingPeople: Array<{ id: string; name: string; role: string; roleContext?: string }> = []): string {
+  const existingPeopleSection = existingPeople.length > 0
+    ? `
+EXISTING PEOPLE IN THE SYSTEM:
+The following people are already recorded in the user's system. When you extract people from the document, check if they match any of these existing entries. If a person in the document matches an existing person, include their exact name AND set "suggestedExistingPersonId" to the matching person's id.
+
+${existingPeople.map(p => `- ID: "${p.id}" | Name: "${p.name}" | Role: ${p.role}${p.roleContext ? ` | Context: ${p.roleContext}` : ''}`).join('\n')}
+
+IMPORTANT: Extract ALL people mentioned in the document, including those who match existing entries. For matches, set suggestedExistingPersonId. For new people, leave it null.
+`
+    : '';
+
+  return `You are a legal document analyst specializing in family law. Your task is to extract ALL relevant information from legal documents (parenting plans, custody orders, court orders, stipulations, etc.).
 
 You must be EXHAUSTIVE and extract EVERY detail that could be relevant for co-parenting. Do not summarize or omit anything.
-
+${existingPeopleSection}
 Return your analysis as a JSON object with this exact structure:
 
 {
@@ -30,32 +43,31 @@ Return your analysis as a JSON object with this exact structure:
     {
       "name": "string - full name as appears in document",
       "suggestedRole": "Parent" | "Child" | "StepParent" | "Clinician" | "Legal" | "Other",
-      "context": "string - description of who this person is (e.g., 'Petitioner, biological mother', 'Minor child, age 8', 'Family therapist')"
-    }
-  ],
-  "legalClauses": [
-    {
-      "clauseRef": "string - section/article reference (e.g., 'Section 4.2', 'Article III.A')",
-      "topic": "string - brief topic name",
-      "fullText": "string - the complete text of the clause",
-      "summary": "string - 1-2 sentence summary"
+      "context": "string - MUST specify relationships BY NAME. Example: 'Biological mother of: Bryant Predmore, Brylee Predmore, Bryce Predmore' NOT just 'biological mother'. Include legal designation (Petitioner/Respondent) if applicable.",
+      "suggestedExistingPersonId": "string or null - the ID of the matching existing person if this person is already in the system, otherwise null"
     }
   ],
   "operationalAgreements": [
     {
       "topic": "string - specific topic name",
       "category": "decision_making" | "parenting_time" | "holiday_schedule" | "school" | "communication" | "financial" | "travel" | "right_of_first_refusal" | "exchange" | "medical" | "extracurricular" | "technology" | "third_party" | "dispute_resolution" | "modification" | "other",
-      "fullText": "string - the complete relevant text",
-      "summary": "string - 1-2 sentence summary"
+      "fullText": "string - the complete relevant text WITH NAMES SUBSTITUTED. Replace 'Mother' with the mother's actual name, 'Father' with the father's actual name throughout.",
+      "summary": "string - 1-2 sentence summary WITH ACTUAL NAMES, not 'Mother'/'Father'"
     }
-  ]
+  ],
+  "partyNameMap": {
+    "Mother": "string - the mother's full name as identified in the document",
+    "Father": "string - the father's full name as identified in the document",
+    "Petitioner": "string - the petitioner's full name",
+    "Respondent": "string - the respondent's full name"
+  }
 }
 
-EXTRACTION GUIDELINES:
+CRITICAL EXTRACTION GUIDELINES:
 
-**People to Extract:**
-- All parents/guardians (Mother, Father, Step-parents)
-- All children mentioned by name
+**People to Extract (EXTRACT EVERYONE):**
+- All parents/guardians (Mother, Father, Step-parents) - identify by full name
+- All children mentioned by name - include ages if stated
 - Attorneys for either party
 - Judges or magistrates
 - Therapists, counselors, mediators
@@ -63,10 +75,21 @@ EXTRACTION GUIDELINES:
 - Parenting coordinators
 - Any other named individuals
 
-**Legal Clauses to Extract:**
-- Extract each numbered/lettered section as a separate clause
-- Include the exact clause reference (Section 4, Article III, etc.)
-- Preserve the full legal text
+**CONTEXT FIELD - MUST BE SPECIFIC:**
+For each person's "context" field, you MUST specify WHO they are related to by name:
+- WRONG: "biological mother" or "Petitioner"
+- CORRECT: "Petitioner. Biological mother of: Bryant Predmore (age 12), Brylee Predmore (age 10), Bryce Predmore (age 8)"
+- WRONG: "family therapist"  
+- CORRECT: "Family therapist for Bryant Predmore and Brylee Predmore, appointed by court"
+- WRONG: "Step-parent"
+- CORRECT: "Step-father of Bryant Predmore, Brylee Predmore, Bryce Predmore. Married to Allison Wilson."
+
+**NAME SUBSTITUTION IN AGREEMENTS:**
+When extracting operationalAgreements, you MUST replace generic party references with actual names:
+- Replace "Mother" with the mother's actual name (e.g., "Allison Wilson")
+- Replace "Father" with the father's actual name (e.g., "Lucas Predmore")
+- Replace "Petitioner"/"Respondent" with actual names
+- Keep children's names as they appear
 
 **Operational Agreements to Extract (BE EXHAUSTIVE):**
 
@@ -171,6 +194,7 @@ For MODIFICATION:
 - Notice periods for modifications
 
 Extract EVERY provision you find. It is better to over-extract than to miss something.`;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -187,7 +211,9 @@ serve(async (req) => {
       totalPages,
       extractedPages,
       wasTruncated,
-      isScanned 
+      isScanned,
+      existingPeople,  // NEW: Array of existing people for matching
+      additionalQuery  // NEW: Optional query for targeted re-extraction
     } = body;
 
     if (!documentContent && !images) {
@@ -198,6 +224,15 @@ serve(async (req) => {
     if (totalPages) {
       console.log(`Total pages: ${totalPages}, extracted: ${extractedPages || 'N/A'}, truncated: ${wasTruncated || false}`);
     }
+    if (existingPeople?.length) {
+      console.log(`Provided ${existingPeople.length} existing people for matching`);
+    }
+    if (additionalQuery) {
+      console.log(`Additional extraction query: "${additionalQuery}"`);
+    }
+
+    // Build system prompt with existing people context
+    const systemPrompt = buildSystemPrompt(existingPeople || []);
 
     let userContent: any[];
     
@@ -212,11 +247,18 @@ serve(async (req) => {
         }
       }));
 
+      let instructionText = `Analyze this legal document (${images.length} page${images.length > 1 ? 's' : ''}) and extract all information according to your instructions. File: ${fileName}`;
+      
+      if (totalPages && totalPages > images.length) {
+        instructionText += ` (Note: Document has ${totalPages} pages total, only first ${images.length} are shown)`;
+      }
+      
+      if (additionalQuery) {
+        instructionText += `\n\nADDITIONAL FOCUS: The user specifically wants you to look for agreements related to: "${additionalQuery}". Extract any provisions matching this query that may have been missed in prior extraction.`;
+      }
+
       userContent = [
-        {
-          type: 'text',
-          text: `Analyze this legal document (${images.length} page${images.length > 1 ? 's' : ''}) and extract all information according to your instructions. File: ${fileName}${totalPages && totalPages > images.length ? ` (Note: Document has ${totalPages} pages total, only first ${images.length} are shown)` : ''}`
-        },
+        { type: 'text', text: instructionText },
         ...imageContents
       ];
     } else if (documentContent) {
@@ -226,6 +268,10 @@ serve(async (req) => {
       let contextNote = '';
       if (wasTruncated) {
         contextNote = `\n\nNOTE: This document has been truncated for processing. Original document has ${totalPages} pages, but only ${extractedPages} pages are included below. Extract as much information as possible from the available content.`;
+      }
+      
+      if (additionalQuery) {
+        contextNote += `\n\nADDITIONAL FOCUS: The user specifically wants you to look for agreements related to: "${additionalQuery}". Extract any provisions matching this query that may have been missed in prior extraction.`;
       }
 
       userContent = [
@@ -256,7 +302,7 @@ ${documentContent}`
       body: JSON.stringify({
         model: MODEL,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: userContent }
         ],
         temperature: 0.1,
@@ -330,11 +376,13 @@ ${documentContent}`
         signedDate: result.metadata?.signedDate || null
       },
       extractedPeople: Array.isArray(result.extractedPeople) ? result.extractedPeople : [],
-      legalClauses: Array.isArray(result.legalClauses) ? result.legalClauses : [],
-      operationalAgreements: Array.isArray(result.operationalAgreements) ? result.operationalAgreements : []
+      legalClauses: [], // Deprecated - always return empty array
+      operationalAgreements: Array.isArray(result.operationalAgreements) ? result.operationalAgreements : [],
+      partyNameMap: result.partyNameMap || {}
     };
 
-    console.log(`Extracted: ${normalizedResult.extractedPeople.length} people, ${normalizedResult.legalClauses.length} clauses, ${normalizedResult.operationalAgreements.length} agreements`);
+    console.log(`Extracted: ${normalizedResult.extractedPeople.length} people, ${normalizedResult.operationalAgreements.length} agreements`);
+    console.log(`Party name map: ${JSON.stringify(normalizedResult.partyNameMap)}`);
 
     return new Response(
       JSON.stringify(normalizedResult),
