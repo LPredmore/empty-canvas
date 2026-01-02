@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { parseLegalDocument } from '../services/ai';
 import { DocumentProcessingModal } from './DocumentProcessingModal';
+import { RecordAgreementModal } from './RecordAgreementModal';
 import { 
   LegalDocument, Agreement, LegalClause, AgreementItem, 
   LegalDocumentType, AgreementStatus, 
@@ -32,6 +33,10 @@ export const RulesDashboard: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
   
+  // Record Agreement Modal State
+  const [showRecordModal, setShowRecordModal] = useState(false);
+  const [existingAgreementItems, setExistingAgreementItems] = useState<AgreementItem[]>([]);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -41,19 +46,26 @@ export const RulesDashboard: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [d, a, p] = await Promise.all([
+      const [d, a, p, items] = await Promise.all([
         api.getLegalDocuments(), 
         api.getAgreements(),
-        api.getPeople()
+        api.getPeople(),
+        api.getAllActiveAgreementItems()
       ]);
       setDocs(d);
       setAgreements(a);
       setExistingPeople(p);
+      setExistingAgreementItems(items);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRecordAgreementConfirm = () => {
+    setShowRecordModal(false);
+    loadData();
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -261,7 +273,10 @@ export const RulesDashboard: React.FC = () => {
       ) : (
         <div className="space-y-4">
           <div className="flex justify-end">
-            <button className="flex items-center gap-2 text-sm font-medium text-primary bg-primary/10 px-4 py-2 rounded-lg hover:bg-primary/20">
+            <button 
+              onClick={() => setShowRecordModal(true)}
+              className="flex items-center gap-2 text-sm font-medium text-primary bg-primary/10 px-4 py-2 rounded-lg hover:bg-primary/20"
+            >
               <Plus className="w-4 h-4" /> Record New Agreement
             </button>
           </div>
@@ -308,6 +323,14 @@ export const RulesDashboard: React.FC = () => {
         onClose={handleCloseProcessingModal}
         onConfirm={handleProcessingConfirm}
         onRequestMoreAgreements={handleRequestMoreAgreements}
+      />
+
+      {/* Record Agreement Modal */}
+      <RecordAgreementModal
+        isOpen={showRecordModal}
+        existingItems={existingAgreementItems}
+        onClose={() => setShowRecordModal(false)}
+        onConfirm={handleRecordAgreementConfirm}
       />
     </div>
   );
