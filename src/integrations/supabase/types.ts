@@ -358,6 +358,7 @@ export type Database = {
       }
       conversations: {
         Row: {
+          amendment_history: Json | null
           ended_at: string | null
           id: string
           pending_responder_id: string | null
@@ -370,6 +371,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          amendment_history?: Json | null
           ended_at?: string | null
           id?: string
           pending_responder_id?: string | null
@@ -382,6 +384,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          amendment_history?: Json | null
           ended_at?: string | null
           id?: string
           pending_responder_id?: string | null
@@ -691,6 +694,7 @@ export type Database = {
       }
       messages: {
         Row: {
+          content_hash: string | null
           conversation_id: string | null
           direction: string
           id: string
@@ -701,6 +705,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          content_hash?: string | null
           conversation_id?: string | null
           direction: string
           id?: string
@@ -711,6 +716,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          content_hash?: string | null
           conversation_id?: string | null
           direction?: string
           id?: string
@@ -835,6 +841,7 @@ export type Database = {
           id: string
           issue_id: string | null
           person_id: string | null
+          source_conversation_id: string | null
           type: string
           user_id: string | null
         }
@@ -844,6 +851,7 @@ export type Database = {
           id?: string
           issue_id?: string | null
           person_id?: string | null
+          source_conversation_id?: string | null
           type: string
           user_id?: string | null
         }
@@ -853,6 +861,7 @@ export type Database = {
           id?: string
           issue_id?: string | null
           person_id?: string | null
+          source_conversation_id?: string | null
           type?: string
           user_id?: string | null
         }
@@ -869,6 +878,13 @@ export type Database = {
             columns: ["person_id"]
             isOneToOne: false
             referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_notes_source_conversation_id_fkey"
+            columns: ["source_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]

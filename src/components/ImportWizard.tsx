@@ -4,8 +4,10 @@ import { parseFileWithAI } from '../services/ai';
 import { Person, SourceType, MessageDirection, Role, AgreementItem, Issue } from '../types';
 import { ConversationAnalysisResult, AnalysisSummary, DetectedAgreement } from '../types/analysisTypes';
 import { parseOFWExport, parseGenericText, parseGmailExport, ParsedConversation } from '../utils/parsers';
+import { generateMessageHash } from '../utils/messageHash';
 import { supabase } from '../lib/supabase';
 import { DetectedAgreementsReview } from './DetectedAgreementsReview';
+import { ContinuityModal, ConversationMatch } from './ContinuityModal';
 import { 
   X, Upload, Calendar, Users, ArrowRight, Save, Loader2, CheckCircle2, 
   FileText, Trash2, FileType, AlertTriangle, Brain, Shield, TrendingUp, Handshake
@@ -45,6 +47,12 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   const [showAgreementsReview, setShowAgreementsReview] = useState(false);
   const [agreementsSavedCount, setAgreementsSavedCount] = useState(0);
   
+  // Continuity Detection State
+  const [matchedConversations, setMatchedConversations] = useState<ConversationMatch[]>([]);
+  const [showContinuityModal, setShowContinuityModal] = useState(false);
+  const [messageHashes, setMessageHashes] = useState<string[]>([]);
+  const [appendLoading, setAppendLoading] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -56,6 +64,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   const handleParse = async () => {
     setLoading(true);
     setParsedData(null);
+    setMatchedConversations([]);
+    setMessageHashes([]);
 
     try {
         let result: ParsedConversation;
@@ -88,6 +98,49 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             }
         });
         setNameMapping(newMapping);
+        
+        // Generate message hashes for deduplication
+        const hashes = result.messages.map(msg => {
+            const senderPerson = existingPeople.find(p => 
+              p.fullName.toLowerCase() === msg.senderName.toLowerCase() ||
+              p.fullName.toLowerCase().includes(msg.senderName.toLowerCase())
+            );
+            return generateMessageHash(
+              senderPerson?.id || msg.senderName,
+              msg.sentAt,
+              msg.body
+            );
+        });
+        setMessageHashes(hashes);
+        
+        // Check for matching conversations (only if we have resolved participant IDs)
+        const resolvedParticipantIds = Object.entries(newMapping)
+          .filter(([_, id]) => id !== 'new' && id !== 'ignore')
+          .map(([_, id]) => id);
+        
+        if (resolvedParticipantIds.length > 0 && result.messages.length > 0) {
+          const sortedMessages = [...result.messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
+          const dateRange = {
+            start: sortedMessages[0].sentAt,
+            end: sortedMessages[sortedMessages.length - 1].sentAt
+          };
+          
+          const matches = await api.findMatchingConversations(
+            resolvedParticipantIds,
+            dateRange,
+            hashes
+          );
+          
+          // Only show continuity modal if there are high-confidence matches (with duplicate messages)
+          const highConfidenceMatches = matches.filter(m => m.overlapType === 'has_duplicate_messages');
+          if (highConfidenceMatches.length > 0) {
+            setMatchedConversations(highConfidenceMatches);
+            setShowContinuityModal(true);
+            setLoading(false);
+            return; // Don't proceed to step 2 yet
+          }
+        }
+        
         setStep(2);
 
     } catch (error: any) {
@@ -110,10 +163,117 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     }
   };
 
+  // Handle appending to existing conversation
+  const handleAppendToConversation = async (targetConversationId: string) => {
+    if (!parsedData) return;
+    
+    setAppendLoading(true);
+    
+    try {
+      // Resolve people first
+      const nameToIdMap: Record<string, string> = {};
+      const participants = Array.from(parsedData.participants) as string[];
+      
+      for (const name of participants) {
+        const action = nameMapping[name];
+        if (action === 'new') {
+          const newPerson = await api.createPerson({ fullName: name, role: Role.Parent });
+          nameToIdMap[name] = newPerson.id;
+        } else if (action && action !== 'ignore') {
+          nameToIdMap[name] = action;
+        }
+      }
+      
+      // Prepare messages with hashes
+      const messagesToAppend = parsedData.messages.map((msg, idx) => {
+        const senderId = nameToIdMap[msg.senderName];
+        const receiverId = nameToIdMap[msg.receiverName];
+        const senderPerson = existingPeople.find(p => p.id === senderId);
+        const direction = senderPerson?.role === Role.Me ? MessageDirection.Outbound : MessageDirection.Inbound;
+        
+        return {
+          rawText: msg.body,
+          sentAt: msg.sentAt.toISOString(),
+          senderId,
+          receiverId: receiverId || undefined,
+          direction,
+          contentHash: messageHashes[idx]
+        };
+      }).filter(m => m.senderId);
+      
+      // Append with deduplication
+      const { addedCount, skippedCount } = await api.appendMessagesWithDeduplication(
+        targetConversationId,
+        messagesToAppend
+      );
+      
+      console.log(`Appended ${addedCount} messages, skipped ${skippedCount} duplicates`);
+      
+      setShowContinuityModal(false);
+      setSavedConversationId(targetConversationId);
+      
+      // Get all messages for re-analysis
+      setAnalysisLoading(true);
+      const allMessages = await api.getMessages(targetConversationId);
+      const messagesForAnalysis = allMessages.map(m => ({
+        id: m.id,
+        senderId: m.senderId,
+        receiverId: m.receiverId,
+        rawText: m.rawText,
+        sentAt: m.sentAt
+      }));
+      
+      // Get conversation details for participant IDs
+      const conv = await api.getConversation(targetConversationId);
+      const participantIds = conv?.participantIds || Object.values(nameToIdMap);
+      
+      // Run re-analysis on complete conversation
+      const summary = await runConversationAnalysis(
+        targetConversationId,
+        messagesForAnalysis,
+        participantIds,
+        true // isReanalysis flag
+      );
+      
+      setAnalysisLoading(false);
+      
+      if (summary) {
+        setAnalysisSummary(summary);
+        if (detectedAgreements.length > 0) {
+          setShowAgreementsReview(true);
+        } else {
+          setShowAnalysisSummary(true);
+        }
+      } else {
+        onSuccess(targetConversationId);
+        handleReset();
+      }
+      
+    } catch (error) {
+      console.error('Append error:', error);
+      alert('Failed to append messages to conversation.');
+    } finally {
+      setAppendLoading(false);
+      setAnalysisLoading(false);
+    }
+  };
+
+  const handleCreateSeparate = () => {
+    setShowContinuityModal(false);
+    setStep(2);
+  };
+
+  const handleCancelContinuity = () => {
+    setShowContinuityModal(false);
+    setParsedData(null);
+    setMessageHashes([]);
+  };
+
   const runConversationAnalysis = async (
     conversationId: string,
     savedMessages: Array<{ id: string; senderId: string; receiverId?: string; rawText: string; sentAt: string }>,
-    participantIds: string[]
+    participantIds: string[],
+    isReanalysis: boolean = false
   ): Promise<AnalysisSummary | null> => {
     try {
       // Fetch all context needed for analysis
@@ -163,7 +323,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             status: issue.status,
             priority: issue.priority
           })),
-          mePersonId
+          mePersonId,
+          isReanalysis
         }
       });
 
@@ -341,7 +502,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     }
 
     if (notesToCreate.length > 0) {
-      await api.createProfileNotesBulk(notesToCreate);
+      // Use idempotent version that handles re-analysis
+      await api.createProfileNotesForConversation(conversationId, notesToCreate);
     }
   };
 
@@ -402,8 +564,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             }
         }
 
-        // 2. Prepare Messages
-        const messagesToSave = parsedData.messages.map(msg => {
+        // 2. Prepare Messages with content hashes
+        const messagesToSave = parsedData.messages.map((msg, idx) => {
             const senderId = nameToIdMap[msg.senderName];
             const receiverId = nameToIdMap[msg.receiverName];
             const senderPerson = existingPeople.find(p => p.id === senderId);
@@ -414,7 +576,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                 sentAt: msg.sentAt.toISOString(),
                 senderId: senderId,
                 receiverId: receiverId || undefined,
-                direction: direction
+                direction: direction,
+                contentHash: messageHashes[idx] || generateMessageHash(senderId, msg.sentAt, msg.body)
             };
         }).filter(m => m.senderId);
 
@@ -494,6 +657,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     setDetectedAgreements([]);
     setShowAgreementsReview(false);
     setAgreementsSavedCount(0);
+    setMatchedConversations([]);
+    setShowContinuityModal(false);
+    setMessageHashes([]);
   };
 
   const handleAgreementsComplete = (savedCount: number) => {
@@ -522,6 +688,26 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   };
 
   if (!isOpen) return null;
+
+  // Continuity detection modal
+  if (showContinuityModal && matchedConversations.length > 0 && parsedData) {
+    const primaryMatch = matchedConversations[0];
+    const newMessageCount = parsedData.messages.length - primaryMatch.duplicateCount;
+    const participantNames = Array.from(parsedData.participants);
+    
+    return (
+      <ContinuityModal
+        isOpen={true}
+        matches={matchedConversations}
+        newMessageCount={newMessageCount}
+        participantNames={participantNames}
+        onAppendToConversation={handleAppendToConversation}
+        onCreateSeparate={handleCreateSeparate}
+        onCancel={handleCancelContinuity}
+        loading={appendLoading}
+      />
+    );
+  }
 
   // Detected agreements review modal
   if (showAgreementsReview && savedConversationId) {
