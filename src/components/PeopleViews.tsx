@@ -332,12 +332,11 @@ export const PersonDetail: React.FC = () => {
   const loadData = async () => {
     if (!id) return;
     try {
-      const [p, allConv, n, allIssues, allEvents, peopleList, rels] = await Promise.all([
+      const [p, allConv, n, linkedIssues, peopleList, rels] = await Promise.all([
         api.getPerson(id),
         api.getConversations(),
         api.getProfileNotes(id),
-        api.getIssues(),
-        api.getEvents(),
+        api.getIssuesForPersonDirect(id),
         api.getPeople(),
         api.getPersonRelationships(id)
       ]);
@@ -345,6 +344,7 @@ export const PersonDetail: React.FC = () => {
       setAllPeople(peopleList);
       setConversations(allConv.filter(c => c.participantIds.includes(id)));
       setNotes(n);
+      setInvolvedIssues(linkedIssues);
       
       // Enrich relationships with person data
       const enrichedRels = rels.map(rel => ({
@@ -352,23 +352,6 @@ export const PersonDetail: React.FC = () => {
         relatedPerson: peopleList.find(person => person.id === rel.relatedPersonId)
       }));
       setRelationships(enrichedRels);
-      
-      // Calculate involved issues
-      const issueIds = new Set<string>();
-      
-      // 1. From Events linked to person
-      const personEvents = allEvents.filter(e => e.relatedPersonIds?.includes(id));
-      personEvents.forEach(e => {
-          e.relatedIssueIds?.forEach(iId => issueIds.add(iId));
-      });
-
-      // 2. From Profile Notes linked to issues (e.g. AI detected issues)
-      n.forEach(note => {
-        if (note.issueId) issueIds.add(note.issueId);
-      });
-      
-      const filteredIssues = allIssues.filter(i => issueIds.has(i.id));
-      setInvolvedIssues(filteredIssues);
 
     } catch (e) {
       console.error(e);

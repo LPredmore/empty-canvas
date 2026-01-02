@@ -38,6 +38,8 @@ Consider:
 - Financial disputes
 - Decision-making conflicts
 
+For each issue, include **involvedPersonIds** - the IDs of all participants who are subjects of, affected by, or contributed to this issue. Include anyone whose behavior is documented, anyone impacted, or anyone mentioned in the issue context.
+
 ### 3. Agreement Violation Detection
 For each agreement item provided, check if any messages violate or conflict with that agreement.
 Classify violations as:
@@ -110,6 +112,7 @@ You MUST respond with valid JSON matching this exact structure:
       "priority": "low" | "medium" | "high",
       "status": "open" | "monitoring",
       "linkedMessageIds": ["array of message IDs that relate to this issue"],
+      "involvedPersonIds": ["array of person IDs who are subjects of or involved in this issue"],
       "reasoning": "string - why this issue was identified"
     }
   ],

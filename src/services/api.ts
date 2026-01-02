@@ -249,6 +249,80 @@ export const api = {
     }).eq('id', id);
   },
 
+  // --- Issue-People Links ---
+  linkPeopleToIssue: async (issueId: string, personIds: string[]): Promise<void> => {
+    if (!personIds || personIds.length === 0) return;
+    
+    const inserts = personIds.map(personId => ({
+      issue_id: issueId,
+      person_id: personId
+    }));
+    
+    const { error } = await supabase
+      .from('issue_people')
+      .upsert(inserts, { onConflict: 'issue_id,person_id', ignoreDuplicates: true });
+    
+    if (error) {
+      console.error('Error linking people to issue:', error);
+    }
+  },
+
+  getPeopleForIssue: async (issueId: string): Promise<Person[]> => {
+    const { data: links, error } = await supabase
+      .from('issue_people')
+      .select('person_id')
+      .eq('issue_id', issueId);
+    
+    if (error || !links || links.length === 0) return [];
+    
+    const personIds = links.map(l => l.person_id);
+    
+    const { data: people, error: peopleError } = await supabase
+      .from('people')
+      .select('*')
+      .in('id', personIds);
+    
+    if (peopleError || !people) return [];
+    
+    return people.map(p => ({
+      id: p.id,
+      fullName: p.full_name,
+      role: p.role as Role,
+      roleContext: p.role_context,
+      email: p.email,
+      phone: p.phone,
+      avatarUrl: p.avatar_url,
+      notes: p.notes
+    }));
+  },
+
+  getIssuesForPersonDirect: async (personId: string): Promise<Issue[]> => {
+    const { data: links, error } = await supabase
+      .from('issue_people')
+      .select('issue_id')
+      .eq('person_id', personId);
+    
+    if (error || !links || links.length === 0) return [];
+    
+    const issueIds = [...new Set(links.map(l => l.issue_id))];
+    
+    const { data: issues, error: issueError } = await supabase
+      .from('issues')
+      .select('*')
+      .in('id', issueIds);
+    
+    if (issueError || !issues) return [];
+    
+    return issues.map(i => ({
+      id: i.id,
+      title: i.title,
+      description: i.description,
+      status: i.status,
+      priority: i.priority,
+      updatedAt: i.updated_at
+    }));
+  },
+
   // --- Conversations ---
   getConversations: async (): Promise<Conversation[]> => {
     const data = await handleResponse(
