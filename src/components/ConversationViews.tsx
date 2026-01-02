@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
+import { processAnalysisResults, updateConversationState, buildAnalysisSummary } from '../services/analysisProcessor';
+import { ConversationAnalysisResult } from '../types/analysisTypes';
 import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus, ConversationAnalysis } from '../types';
 import { format, isSameDay, isSameMonth, isSameYear, differenceInDays } from 'date-fns';
-import { Search, Filter, Paperclip, Send, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User } from 'lucide-react';
+import { Search, Filter, Paperclip, Send, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User, RefreshCw } from 'lucide-react';
 import { ConversationAnalysisPanel } from './ConversationAnalysisPanel';
 
 const formatDateRange = (startedAt?: string, endedAt?: string): string => {
@@ -243,13 +245,19 @@ export const ConversationDetail: React.FC = () => {
       // Get messages for analysis
       const msgs = await api.getMessages(id);
       const agreements = await api.getAllActiveAgreementItems();
+      const existingIssuesList = await api.getIssues();
+      
+      // Find "Me" person for context
+      const mePerson = people.find(p => p.role === 'me');
       
       // Call the analysis edge function
       const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
         body: {
+          conversationId: id,
           messages: msgs.map(m => ({
             id: m.id,
             senderId: m.senderId,
+            receiverId: m.receiverId,
             rawText: m.rawText,
             sentAt: m.sentAt,
             direction: m.direction
@@ -259,36 +267,53 @@ export const ConversationDetail: React.FC = () => {
             name: p.fullName,
             role: p.role
           })),
-          existingAgreements: agreements.map(a => ({
+          agreementItems: agreements.map(a => ({
             id: a.id,
             topic: a.topic,
+            fullText: a.fullText,
             summary: a.summary || a.fullText.slice(0, 100)
           })),
-          existingIssues: issues.map(i => ({
+          existingIssues: existingIssuesList.map(i => ({
             id: i.id,
             title: i.title,
-            status: i.status
-          }))
+            description: i.description,
+            status: i.status,
+            priority: i.priority
+          })),
+          mePersonId: mePerson?.id,
+          isReanalysis: true
         }
       });
       
       if (error) throw error;
       
       if (data) {
-        // Save the analysis
-        await api.saveConversationAnalysis({
-          conversationId: id,
-          summary: data.conversationAnalysis?.summary || 'Analysis complete',
-          overallTone: data.conversationAnalysis?.overallTone || 'neutral',
-          keyTopics: data.conversationAnalysis?.keyTopics || [],
-          topicCategorySlugs: data.topicCategorySlugs || [],
-          agreementViolations: data.agreementViolations || [],
-          messageAnnotations: data.messageAnnotations || []
-        });
+        const analysisResult = data as ConversationAnalysisResult;
         
-        // Reload the analysis
+        // Use shared processor for full processing (issues, contributions, profile notes)
+        await processAnalysisResults(id, analysisResult, msgs.map(m => ({
+          id: m.id,
+          senderId: m.senderId || '',
+          receiverId: m.receiverId,
+          rawText: m.rawText || '',
+          sentAt: m.sentAt || ''
+        })));
+        
+        // Update conversation state (resolution status)
+        if (analysisResult.conversationState) {
+          await updateConversationState(id, analysisResult.conversationState);
+        }
+        
+        // Build summary for feedback
+        const stats = buildAnalysisSummary(analysisResult);
+        console.log('Refresh analysis complete:', stats);
+        
+        // Reload the analysis and data
         const newAnalysis = await api.getConversationAnalysis(id);
         setAnalysis(newAnalysis);
+        
+        // Reload conversation to get updated status
+        loadData();
       }
     } catch (e) {
       console.error('Failed to refresh analysis:', e);
