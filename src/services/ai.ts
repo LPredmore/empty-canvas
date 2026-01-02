@@ -450,20 +450,50 @@ async function processAnalysisResultsFromChat(
   // 3. Process person analyses -> profile notes
   for (const personAnalysis of (analysis.personAnalyses || [])) {
     try {
-      const noteContent = [
-        `## Clinical Assessment`,
-        personAnalysis.clinicalAssessment?.summary || '',
-        '',
-        `**Communication Style:** ${personAnalysis.clinicalAssessment?.communicationStyle || 'N/A'}`,
-        `**Emotional Regulation:** ${personAnalysis.clinicalAssessment?.emotionalRegulation || 'N/A'}`,
-        `**Boundary Respect:** ${personAnalysis.clinicalAssessment?.boundaryRespect || 'N/A'}`,
-        `**Co-parenting Cooperation:** ${personAnalysis.clinicalAssessment?.coparentingCooperation || 'N/A'}`,
-        '',
-        `## Strategic Notes`,
-        `**Observations:** ${personAnalysis.strategicNotes?.observations?.join('; ') || 'None'}`,
-        `**Patterns:** ${personAnalysis.strategicNotes?.patterns?.join('; ') || 'None'}`,
-        `**Strategies:** ${personAnalysis.strategicNotes?.strategies?.join('; ') || 'None'}`
-      ].join('\n');
+      let noteContent: string;
+      
+      // Handle NEW behavioral assessment format (preferred)
+      if (personAnalysis.behavioralAssessment?.summary) {
+        const ba = personAnalysis.behavioralAssessment;
+        noteContent = [
+          `## Behavioral Assessment`,
+          ba.summary,
+          '',
+          `**Interaction Quality:**`,
+          `- Cooperation: ${ba.cooperationLevel || 'N/A'}`,
+          `- Flexibility: ${ba.flexibilityLevel || 'N/A'}`,
+          `- Responsiveness: ${ba.responsivenessLevel || 'N/A'}`,
+          `- Accountability: ${ba.accountabilityLevel || 'N/A'}`,
+          `- Boundary Respect: ${ba.boundaryRespect || 'N/A'}`,
+          '',
+          personAnalysis.notablePatterns?.positive?.length 
+            ? `**Positive Patterns:** ${personAnalysis.notablePatterns.positive.join('; ')}`
+            : '',
+          personAnalysis.notablePatterns?.concerning?.length
+            ? `**Concerning Patterns:** ${personAnalysis.notablePatterns.concerning.join('; ')}`
+            : '',
+          personAnalysis.interactionRecommendations?.length
+            ? `**Recommendations:** ${personAnalysis.interactionRecommendations.join('; ')}`
+            : ''
+        ].filter(Boolean).join('\n');
+      } 
+      // Handle OLD clinical assessment format (backward compatibility)
+      else {
+        noteContent = [
+          `## Clinical Assessment`,
+          personAnalysis.clinicalAssessment?.summary || '',
+          '',
+          `**Communication Style:** ${personAnalysis.clinicalAssessment?.communicationStyle || 'N/A'}`,
+          `**Emotional Regulation:** ${personAnalysis.clinicalAssessment?.emotionalRegulation || 'N/A'}`,
+          `**Boundary Respect:** ${personAnalysis.clinicalAssessment?.boundaryRespect || 'N/A'}`,
+          `**Co-parenting Cooperation:** ${personAnalysis.clinicalAssessment?.coparentingCooperation || 'N/A'}`,
+          '',
+          `## Strategic Notes`,
+          `**Observations:** ${personAnalysis.strategicNotes?.observations?.join('; ') || 'None'}`,
+          `**Patterns:** ${personAnalysis.strategicNotes?.patterns?.join('; ') || 'None'}`,
+          `**Strategies:** ${personAnalysis.strategicNotes?.strategies?.join('; ') || 'None'}`
+        ].join('\n');
+      }
 
       await api.createProfileNote({
         personId: personAnalysis.personId,
