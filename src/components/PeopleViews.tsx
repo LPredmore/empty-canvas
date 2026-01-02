@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { generatePersonAnalysis, clarifyPerson } from '../services/ai';
 import { Person, Role, ProfileNote, Conversation, Issue, Event, ConversationTurn, SuggestedRelationship, PersonRelationship } from '../types';
-import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon } from 'lucide-react';
+import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon, Pencil } from 'lucide-react';
 import { ClarificationModal } from './ClarificationModal';
 
 export const PeopleList: React.FC = () => {
@@ -314,6 +314,12 @@ export const PersonDetail: React.FC = () => {
   const [relDescription, setRelDescription] = useState('');
   const [creatingRel, setCreatingRel] = useState(false);
 
+  // Edit Relationship State
+  const [editingRel, setEditingRel] = useState<(PersonRelationship & { relatedPerson?: Person }) | null>(null);
+  const [editRelType, setEditRelType] = useState('');
+  const [editRelDescription, setEditRelDescription] = useState('');
+  const [updatingRel, setUpdatingRel] = useState(false);
+
   useEffect(() => {
     if (!id) return;
     loadData();
@@ -422,6 +428,30 @@ export const PersonDetail: React.FC = () => {
       console.error(e);
     } finally {
       setCreatingRel(false);
+    }
+  };
+
+  const openEditRelModal = (rel: PersonRelationship & { relatedPerson?: Person }) => {
+    setEditingRel(rel);
+    setEditRelType(rel.relationshipType);
+    setEditRelDescription(rel.description || '');
+  };
+
+  const handleUpdateRelationship = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRel) return;
+    setUpdatingRel(true);
+    try {
+      await api.updatePersonRelationship(editingRel.id, {
+        relationshipType: editRelType,
+        description: editRelDescription || undefined
+      });
+      setEditingRel(null);
+      loadData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setUpdatingRel(false);
     }
   };
 
@@ -555,31 +585,37 @@ export const PersonDetail: React.FC = () => {
                   <div className="p-4 text-slate-500 text-sm">No relationships defined.</div>
                 ) : (
                   relationships.map(rel => (
-                    <Link 
-                      to={`/people/${rel.relatedPersonId}`} 
-                      key={rel.id} 
-                      className="block p-4 hover:bg-slate-50"
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
+                    <div key={rel.id} className="flex items-center justify-between p-4 hover:bg-slate-50">
+                      <Link 
+                        to={`/people/${rel.relatedPersonId}`} 
+                        className="flex-1"
+                      >
+                        <div className="flex items-center gap-2">
                           <span className="font-medium text-slate-800">
                             {rel.relatedPerson?.fullName || 'Unknown'}
                           </span>
-                          <span className="text-slate-400 mx-2">•</span>
+                          <span className="text-slate-400">•</span>
                           <span className="text-sm text-indigo-600 capitalize">
                             {rel.relationshipType.replace(/_/g, ' ')}
                           </span>
+                          {rel.relatedPerson && (
+                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
+                              {rel.relatedPerson.role}
+                            </span>
+                          )}
                         </div>
-                        {rel.relatedPerson && (
-                          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
-                            {rel.relatedPerson.role}
-                          </span>
+                        {rel.description && (
+                          <p className="text-sm text-slate-500 mt-1">{rel.description}</p>
                         )}
-                      </div>
-                      {rel.description && (
-                        <p className="text-sm text-slate-500 mt-1">{rel.description}</p>
-                      )}
-                    </Link>
+                      </Link>
+                      <button
+                        onClick={() => openEditRelModal(rel)}
+                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="Edit relationship"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    </div>
                   ))
                 )}
               </div>
@@ -748,6 +784,63 @@ export const PersonDetail: React.FC = () => {
               <button type="submit" disabled={creatingRel} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {creatingRel ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Add Relationship
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Relationship Modal */}
+      {editingRel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-800">Edit Relationship</h3>
+              <button onClick={() => setEditingRel(null)}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
+            </div>
+            <div className="mb-4 p-3 bg-slate-50 rounded-lg">
+              <p className="text-sm text-slate-600">
+                Relationship with <span className="font-medium text-slate-800">{editingRel.relatedPerson?.fullName || 'Unknown'}</span>
+              </p>
+            </div>
+            <form onSubmit={handleUpdateRelationship} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Relationship Type</label>
+                <select
+                  required
+                  value={editRelType}
+                  onChange={e => setEditRelType(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                >
+                  <option value="">Select relationship...</option>
+                  <option value="parent_of">Parent of</option>
+                  <option value="child_of">Child of</option>
+                  <option value="step_parent_of">Step-parent of</option>
+                  <option value="step_child_of">Step-child of</option>
+                  <option value="sibling_of">Sibling of</option>
+                  <option value="step_sibling_of">Step-sibling of</option>
+                  <option value="spouse_of">Spouse of</option>
+                  <option value="ex_spouse_of">Ex-spouse of</option>
+                  <option value="therapist_for">Therapist for</option>
+                  <option value="attorney_for">Attorney for</option>
+                  <option value="guardian_ad_litem_for">Guardian ad litem for</option>
+                  <option value="grandparent_of">Grandparent of</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Description (optional)</label>
+                <input 
+                  type="text"
+                  value={editRelDescription} 
+                  onChange={e => setEditRelDescription(e.target.value)} 
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" 
+                  placeholder="e.g., Primary custody parent"
+                />
+              </div>
+              <button type="submit" disabled={updatingRel} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {updatingRel ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save Changes
               </button>
             </form>
           </div>
