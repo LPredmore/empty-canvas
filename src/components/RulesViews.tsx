@@ -6,8 +6,8 @@ import { DocumentProcessingModal } from './DocumentProcessingModal';
 import { 
   LegalDocument, Agreement, LegalClause, AgreementItem, 
   LegalDocumentType, AgreementStatus, 
-  DocumentExtractionResult, ExtractedPerson, ExtractedClause, ExtractedAgreement,
-  Role
+  DocumentExtractionResult, ExtractedAgreement,
+  Role, Person, ExtractedPersonWithAction
 } from '../types';
 import { format } from 'date-fns';
 import { Scale, FileText, Handshake, Calendar, Gavel, Loader2, Plus, ArrowRight, X, Save, Upload, Trash2, AlertCircle } from 'lucide-react';
@@ -16,6 +16,7 @@ export const RulesDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'legal' | 'agreements'>('legal');
   const [docs, setDocs] = useState<LegalDocument[]>([]);
   const [agreements, setAgreements] = useState<Agreement[]>([]);
+  const [existingPeople, setExistingPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Upload Modal State
@@ -40,9 +41,14 @@ export const RulesDashboard: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [d, a] = await Promise.all([api.getLegalDocuments(), api.getAgreements()]);
+      const [d, a, p] = await Promise.all([
+        api.getLegalDocuments(), 
+        api.getAgreements(),
+        api.getPeople()
+      ]);
       setDocs(d);
       setAgreements(a);
+      setExistingPeople(p);
     } catch (e) {
       console.error(e);
     } finally {
@@ -54,7 +60,6 @@ export const RulesDashboard: React.FC = () => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedFile(file);
-      // Start processing immediately
       startDocumentProcessing(file);
     }
   };
@@ -68,7 +73,7 @@ export const RulesDashboard: React.FC = () => {
     setExtractionResult(null);
 
     try {
-      const result = await parseLegalDocument(file);
+      const result = await parseLegalDocument(file, { existingPeople });
       setExtractionResult(result);
     } catch (e: any) {
       console.error('Document processing error:', e);
@@ -78,10 +83,23 @@ export const RulesDashboard: React.FC = () => {
     }
   };
 
+  const handleRequestMoreAgreements = async (query: string): Promise<ExtractedAgreement[]> => {
+    if (!processingFile) return [];
+    try {
+      const result = await parseLegalDocument(processingFile, { 
+        existingPeople, 
+        additionalQuery: query 
+      });
+      return result.operationalAgreements;
+    } catch (e) {
+      console.error('Re-extraction failed:', e);
+      return [];
+    }
+  };
+
   const handleProcessingConfirm = async (data: {
     metadata: DocumentExtractionResult['metadata'];
-    people: ExtractedPerson[];
-    clauses: ExtractedClause[];
+    people: ExtractedPersonWithAction[];
     agreements: ExtractedAgreement[];
   }) => {
     setUploading(true);
@@ -103,19 +121,13 @@ export const RulesDashboard: React.FC = () => {
       if (processingFile) {
         try {
           const fileUrl = await api.uploadLegalDocumentFile(processingFile, legalDoc.id);
-          // Update the document with the file URL
           await api.updateLegalDocument(legalDoc.id, { fileUrl });
         } catch (uploadErr) {
           console.error('File upload error (continuing without file):', uploadErr);
         }
       }
 
-      // 3. Create legal clauses
-      if (data.clauses.length > 0) {
-        await api.createLegalClausesBulk(legalDoc.id, data.clauses);
-      }
-
-      // 4. Create operational agreements
+      // 3. Create operational agreements
       if (data.agreements.length > 0) {
         await api.createAgreementWithItemsBulk(
           `${data.metadata.suggestedTitle} - Extracted Agreements`,
@@ -124,13 +136,16 @@ export const RulesDashboard: React.FC = () => {
         );
       }
 
-      // 5. Create people
-      if (data.people.length > 0) {
-        const peopleToCreate = data.people.map(p => ({
+      // 4. Create new people (only those with action === 'create')
+      const peopleToCreate = data.people
+        .filter(p => p.action === 'create')
+        .map(p => ({
           name: p.name,
           role: p.editedRole || p.suggestedRole,
           context: p.editedContext ?? p.context
         }));
+      
+      if (peopleToCreate.length > 0) {
         await api.createPeopleBulk(peopleToCreate);
       }
 
@@ -287,10 +302,12 @@ export const RulesDashboard: React.FC = () => {
         isOpen={showProcessingModal}
         file={processingFile}
         extractionResult={extractionResult}
+        existingPeople={existingPeople}
         isProcessing={isProcessing}
         processingError={processingError}
         onClose={handleCloseProcessingModal}
         onConfirm={handleProcessingConfirm}
+        onRequestMoreAgreements={handleRequestMoreAgreements}
       />
     </div>
   );
