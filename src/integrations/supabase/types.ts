@@ -52,33 +52,51 @@ export type Database = {
       agreement_items: {
         Row: {
           agreement_id: string | null
+          contingency_condition: string | null
           created_at: string
+          detected_at: string | null
           full_text: string
           id: string
           is_active: boolean | null
           item_ref: string | null
+          override_status: string | null
+          overrides_item_id: string | null
+          source_conversation_id: string | null
+          source_message_id: string | null
           summary: string | null
           topic: string
           user_id: string | null
         }
         Insert: {
           agreement_id?: string | null
+          contingency_condition?: string | null
           created_at?: string
+          detected_at?: string | null
           full_text: string
           id?: string
           is_active?: boolean | null
           item_ref?: string | null
+          override_status?: string | null
+          overrides_item_id?: string | null
+          source_conversation_id?: string | null
+          source_message_id?: string | null
           summary?: string | null
           topic: string
           user_id?: string | null
         }
         Update: {
           agreement_id?: string | null
+          contingency_condition?: string | null
           created_at?: string
+          detected_at?: string | null
           full_text?: string
           id?: string
           is_active?: boolean | null
           item_ref?: string | null
+          override_status?: string | null
+          overrides_item_id?: string | null
+          source_conversation_id?: string | null
+          source_message_id?: string | null
           summary?: string | null
           topic?: string
           user_id?: string | null
@@ -89,6 +107,27 @@ export type Database = {
             columns: ["agreement_id"]
             isOneToOne: false
             referencedRelation: "agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agreement_items_overrides_item_id_fkey"
+            columns: ["overrides_item_id"]
+            isOneToOne: false
+            referencedRelation: "agreement_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agreement_items_source_conversation_id_fkey"
+            columns: ["source_conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agreement_items_source_message_id_fkey"
+            columns: ["source_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
         ]
@@ -791,7 +830,45 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_agreement_item_override_chain: {
+        Args: { p_item_id: string }
+        Returns: {
+          agreement_id: string
+          chain_depth: number
+          contingency_condition: string
+          created_at: string
+          detected_at: string
+          full_text: string
+          id: string
+          is_active: boolean
+          item_ref: string
+          override_status: string
+          overrides_item_id: string
+          source_conversation_id: string
+          source_message_id: string
+          summary: string
+          topic: string
+        }[]
+      }
+      get_effective_agreement_item: {
+        Args: { p_topic: string; p_user_id: string }
+        Returns: {
+          agreement_id: string
+          contingency_condition: string
+          created_at: string
+          detected_at: string
+          full_text: string
+          id: string
+          is_active: boolean
+          item_ref: string
+          override_status: string
+          overrides_item_id: string
+          source_conversation_id: string
+          source_message_id: string
+          summary: string
+          topic: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

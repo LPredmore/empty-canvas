@@ -1137,6 +1137,185 @@ export const api = {
     });
     
     if (error) console.error('Error linking messages to issue:', error);
+  },
+
+  // --- Agreement Item Override Management ---
+
+  createAgreementItemFromConversation: async (
+    agreementId: string,
+    item: {
+      topic: string;
+      summary: string;
+      fullText: string;
+      overridesItemId?: string;
+      contingencyCondition?: string;
+      sourceConversationId: string;
+      sourceMessageId?: string;
+    }
+  ): Promise<AgreementItem> => {
+    const { data, error } = await supabase.from('agreement_items').insert({
+      agreement_id: agreementId,
+      topic: item.topic,
+      summary: item.summary,
+      full_text: item.fullText,
+      overrides_item_id: item.overridesItemId,
+      override_status: item.overridesItemId ? 'active' : null,
+      contingency_condition: item.contingencyCondition,
+      source_conversation_id: item.sourceConversationId,
+      source_message_id: item.sourceMessageId,
+      detected_at: new Date().toISOString(),
+      is_active: true
+    }).select().single();
+
+    if (error) throw error;
+    return {
+      id: data.id,
+      agreementId: data.agreement_id,
+      topic: data.topic,
+      fullText: data.full_text,
+      summary: data.summary,
+      isActive: data.is_active,
+      overridesItemId: data.overrides_item_id,
+      overrideStatus: data.override_status,
+      contingencyCondition: data.contingency_condition,
+      sourceConversationId: data.source_conversation_id,
+      sourceMessageId: data.source_message_id,
+      detectedAt: data.detected_at
+    };
+  },
+
+  getAgreementItemWithOverrides: async (itemId: string): Promise<AgreementItem[]> => {
+    const { data, error } = await supabase.rpc('get_agreement_item_override_chain', { p_item_id: itemId });
+    
+    if (error || !data) return [];
+    return data.map((i: any) => ({
+      id: i.id,
+      agreementId: i.agreement_id,
+      itemRef: i.item_ref,
+      topic: i.topic,
+      fullText: i.full_text,
+      summary: i.summary,
+      isActive: i.is_active,
+      overridesItemId: i.overrides_item_id,
+      overrideStatus: i.override_status,
+      contingencyCondition: i.contingency_condition,
+      sourceConversationId: i.source_conversation_id,
+      sourceMessageId: i.source_message_id,
+      detectedAt: i.detected_at
+    }));
+  },
+
+  getEffectiveAgreementItem: async (topic: string): Promise<AgreementItem | null> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    
+    const { data, error } = await supabase.rpc('get_effective_agreement_item', { 
+      p_user_id: user.id, 
+      p_topic: topic 
+    });
+    
+    if (error || !data || data.length === 0) return null;
+    const i = data[0];
+    return {
+      id: i.id,
+      agreementId: i.agreement_id,
+      itemRef: i.item_ref,
+      topic: i.topic,
+      fullText: i.full_text,
+      summary: i.summary,
+      isActive: i.is_active,
+      overridesItemId: i.overrides_item_id,
+      overrideStatus: i.override_status,
+      contingencyCondition: i.contingency_condition,
+      sourceConversationId: i.source_conversation_id,
+      sourceMessageId: i.source_message_id,
+      detectedAt: i.detected_at
+    };
+  },
+
+  updateAgreementItemOverrideStatus: async (
+    itemId: string, 
+    status: 'active' | 'disputed' | 'withdrawn'
+  ): Promise<void> => {
+    const { error } = await supabase
+      .from('agreement_items')
+      .update({ override_status: status })
+      .eq('id', itemId);
+    
+    if (error) throw error;
+  },
+
+  getAgreementItemsWithOverrideInfo: async (agreementId?: string): Promise<AgreementItem[]> => {
+    let query = supabase.from('agreement_items').select('*');
+    if (agreementId) {
+      query = query.eq('agreement_id', agreementId);
+    }
+    const { data, error } = await query;
+    
+    if (error || !data) return [];
+    return data.map((i: any) => ({
+      id: i.id,
+      agreementId: i.agreement_id,
+      itemRef: i.item_ref,
+      topic: i.topic,
+      fullText: i.full_text,
+      summary: i.summary,
+      isActive: i.is_active,
+      overridesItemId: i.overrides_item_id,
+      overrideStatus: i.override_status,
+      contingencyCondition: i.contingency_condition,
+      sourceConversationId: i.source_conversation_id,
+      sourceMessageId: i.source_message_id,
+      detectedAt: i.detected_at
+    }));
+  },
+
+  // Get or create a "Conversation Agreements" agreement for informal agreements
+  getOrCreateConversationAgreement: async (): Promise<Agreement> => {
+    const title = 'Conversation Agreements';
+    
+    // Check if it exists
+    const { data: existing } = await supabase
+      .from('agreements')
+      .select('*')
+      .eq('title', title)
+      .eq('source_type', 'other')
+      .single();
+    
+    if (existing) {
+      return {
+        id: existing.id,
+        title: existing.title,
+        description: existing.description,
+        sourceType: existing.source_type,
+        sourceReference: existing.source_reference,
+        agreedDate: existing.agreed_date,
+        status: existing.status,
+        createdAt: existing.created_at,
+        partyIds: []
+      };
+    }
+    
+    // Create it
+    const { data, error } = await supabase.from('agreements').insert({
+      title,
+      description: 'Informal agreements detected from conversation analysis',
+      source_type: 'other',
+      status: 'agreed'
+    }).select().single();
+    
+    if (error) throw error;
+    return {
+      id: data.id,
+      title: data.title,
+      description: data.description,
+      sourceType: data.source_type,
+      sourceReference: data.source_reference,
+      agreedDate: data.agreed_date,
+      status: data.status,
+      createdAt: data.created_at,
+      partyIds: []
+    };
   }
 
 };

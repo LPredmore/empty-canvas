@@ -286,6 +286,13 @@ export interface AgreementItem {
   summary?: string;
   isActive: boolean;
   relatedIssueIds?: string[];
+  // Override tracking fields
+  overridesItemId?: string;
+  overrideStatus?: 'active' | 'disputed' | 'withdrawn';
+  contingencyCondition?: string;
+  sourceConversationId?: string;
+  sourceMessageId?: string;
+  detectedAt?: string;
 }
 
 // --- Assistant Types ---

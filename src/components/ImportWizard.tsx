@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { parseFileWithAI } from '../services/ai';
 import { Person, SourceType, MessageDirection, Role, AgreementItem, Issue } from '../types';
-import { ConversationAnalysisResult, AnalysisSummary } from '../types/analysisTypes';
+import { ConversationAnalysisResult, AnalysisSummary, DetectedAgreement } from '../types/analysisTypes';
 import { parseOFWExport, parseGenericText, parseGmailExport, ParsedConversation } from '../utils/parsers';
 import { supabase } from '../lib/supabase';
+import { DetectedAgreementsReview } from './DetectedAgreementsReview';
 import { 
   X, Upload, Calendar, Users, ArrowRight, Save, Loader2, CheckCircle2, 
-  FileText, Trash2, FileType, AlertTriangle, Brain, Shield, TrendingUp
+  FileText, Trash2, FileType, AlertTriangle, Brain, Shield, TrendingUp, Handshake
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -37,6 +38,12 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   // Analysis State
   const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
   const [showAnalysisSummary, setShowAnalysisSummary] = useState(false);
+  const [savedConversationId, setSavedConversationId] = useState<string | null>(null);
+  
+  // Detected Agreements State
+  const [detectedAgreements, setDetectedAgreements] = useState<DetectedAgreement[]>([]);
+  const [showAgreementsReview, setShowAgreementsReview] = useState(false);
+  const [agreementsSavedCount, setAgreementsSavedCount] = useState(0);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -155,8 +162,14 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
 
       const analysisResult = data as ConversationAnalysisResult;
 
-      // Process the analysis results
+      // Process the analysis results (issues, profile notes, etc.)
       await processAnalysisResults(conversationId, analysisResult, savedMessages);
+
+      // Store detected agreements for review
+      const detectedAgreementsFromAnalysis = analysisResult.detectedAgreements || [];
+      if (detectedAgreementsFromAnalysis.length > 0) {
+        setDetectedAgreements(detectedAgreementsFromAnalysis);
+      }
 
       // Build summary for user
       const summary: AnalysisSummary = {
@@ -165,7 +178,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         issuesUpdated: analysisResult.issueActions?.filter(a => a.action === 'update').length || 0,
         violationsDetected: analysisResult.agreementViolations?.length || 0,
         peopleAnalyzed: analysisResult.personAnalyses?.length || 0,
-        keyFindings: extractKeyFindings(analysisResult)
+        keyFindings: extractKeyFindings(analysisResult),
+        agreementsDetected: detectedAgreementsFromAnalysis.length
       };
 
       return summary;
@@ -404,10 +418,16 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         );
 
         setAnalysisLoading(false);
+        setSavedConversationId(newConversation.id);
 
         if (summary) {
           setAnalysisSummary(summary);
-          setShowAnalysisSummary(true);
+          // If agreements were detected, show review first
+          if (detectedAgreements.length > 0) {
+            setShowAgreementsReview(true);
+          } else {
+            setShowAnalysisSummary(true);
+          }
         } else {
           // If analysis failed, just proceed
           onSuccess(newConversation.id);
@@ -429,15 +449,29 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     setParsedData(null);
     setAnalysisSummary(null);
     setShowAnalysisSummary(false);
+    setSavedConversationId(null);
+    setDetectedAgreements([]);
+    setShowAgreementsReview(false);
+    setAgreementsSavedCount(0);
+  };
+
+  const handleAgreementsComplete = (savedCount: number) => {
+    setAgreementsSavedCount(savedCount);
+    setShowAgreementsReview(false);
+    setShowAnalysisSummary(true);
+  };
+
+  const handleAgreementsSkip = () => {
+    setShowAgreementsReview(false);
+    setShowAnalysisSummary(true);
   };
 
   const handleAnalysisDismiss = () => {
-    if (parsedData) {
-      // We need to get the conversation ID - it was created in handleSave
-      // For now, just close and reset
-      onClose();
-      handleReset();
+    if (savedConversationId) {
+      onSuccess(savedConversationId);
     }
+    onClose();
+    handleReset();
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -447,6 +481,19 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   };
 
   if (!isOpen) return null;
+
+  // Detected agreements review modal
+  if (showAgreementsReview && savedConversationId) {
+    return (
+      <DetectedAgreementsReview
+        isOpen={true}
+        detectedAgreements={detectedAgreements}
+        conversationId={savedConversationId}
+        onComplete={handleAgreementsComplete}
+        onSkip={handleAgreementsSkip}
+      />
+    );
+  }
 
   // Analysis loading overlay
   if (analysisLoading) {
@@ -526,6 +573,16 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                     Violations
                   </div>
                   <div className="font-bold text-red-700">{analysisSummary.violationsDetected}</div>
+                </div>
+              )}
+
+              {agreementsSavedCount > 0 && (
+                <div className="bg-emerald-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-emerald-700 text-sm mb-1">
+                    <Handshake className="w-4 h-4" />
+                    Agreements Saved
+                  </div>
+                  <div className="font-bold text-emerald-700">{agreementsSavedCount}</div>
                 </div>
               )}
             </div>
