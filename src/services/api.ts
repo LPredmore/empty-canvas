@@ -999,6 +999,144 @@ export const api = {
       notes: p.notes,
       roleContext: p.role_context
     }));
+  },
+
+  // --- Conversation Analysis ---
+  
+  saveConversationAnalysis: async (analysis: {
+    conversationId: string;
+    summary: string;
+    overallTone: string;
+    keyTopics: string[];
+    agreementViolations: any[];
+    messageAnnotations: any[];
+  }): Promise<void> => {
+    const { error } = await supabase.from('conversation_analyses').upsert({
+      conversation_id: analysis.conversationId,
+      summary: analysis.summary,
+      overall_tone: analysis.overallTone,
+      key_topics: analysis.keyTopics,
+      agreement_violations: analysis.agreementViolations,
+      message_annotations: analysis.messageAnnotations
+    }, { onConflict: 'conversation_id,user_id' });
+    
+    if (error) throw error;
+  },
+
+  getConversationAnalysis: async (conversationId: string): Promise<any | null> => {
+    const { data, error } = await supabase
+      .from('conversation_analyses')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .single();
+    
+    if (error || !data) return null;
+    return {
+      id: data.id,
+      conversationId: data.conversation_id,
+      summary: data.summary,
+      overallTone: data.overall_tone,
+      keyTopics: data.key_topics,
+      agreementViolations: data.agreement_violations,
+      messageAnnotations: data.message_annotations,
+      createdAt: data.created_at
+    };
+  },
+
+  linkConversationToIssue: async (conversationId: string, issueId: string, reason?: string): Promise<void> => {
+    const { error } = await supabase.from('conversation_issue_links').upsert({
+      conversation_id: conversationId,
+      issue_id: issueId,
+      link_reason: reason
+    }, { onConflict: 'conversation_id,issue_id,user_id' });
+    
+    if (error) throw error;
+  },
+
+  getConversationIssueLinks: async (conversationId: string): Promise<Array<{ issueId: string; reason?: string }>> => {
+    const { data, error } = await supabase
+      .from('conversation_issue_links')
+      .select('issue_id, link_reason')
+      .eq('conversation_id', conversationId);
+    
+    if (error || !data) return [];
+    return data.map((link: any) => ({
+      issueId: link.issue_id,
+      reason: link.link_reason
+    }));
+  },
+
+  getIssuesForPerson: async (personId: string): Promise<Issue[]> => {
+    // Get all messages where this person is sender or receiver
+    const { data: messages, error: msgError } = await supabase
+      .from('messages')
+      .select('id')
+      .or(`sender_id.eq.${personId},receiver_id.eq.${personId}`);
+    
+    if (msgError || !messages || messages.length === 0) return [];
+    
+    const messageIds = messages.map((m: any) => m.id);
+    
+    // Get issue links for those messages
+    const { data: links, error: linkError } = await supabase
+      .from('message_issues')
+      .select('issue_id')
+      .in('message_id', messageIds);
+    
+    if (linkError || !links || links.length === 0) return [];
+    
+    const issueIds = [...new Set(links.map((l: any) => l.issue_id))];
+    
+    // Get the issues
+    const { data: issues, error: issueError } = await supabase
+      .from('issues')
+      .select('*')
+      .in('id', issueIds);
+    
+    if (issueError || !issues) return [];
+    
+    return issues.map((i: any) => ({
+      id: i.id,
+      title: i.title,
+      description: i.description,
+      status: i.status,
+      priority: i.priority,
+      updatedAt: i.updated_at
+    }));
+  },
+
+  createProfileNotesBulk: async (notes: Array<{
+    personId: string;
+    type: 'observation' | 'strategy' | 'pattern';
+    content: string;
+  }>): Promise<void> => {
+    if (notes.length === 0) return;
+    
+    const inserts = notes.map(n => ({
+      person_id: n.personId,
+      type: n.type,
+      content: n.content
+    }));
+    
+    const { error } = await supabase.from('profile_notes').insert(inserts);
+    if (error) throw error;
+  },
+
+  linkMessagesToIssue: async (messageIds: string[], issueId: string): Promise<void> => {
+    if (messageIds.length === 0) return;
+    
+    const inserts = messageIds.map(msgId => ({
+      message_id: msgId,
+      issue_id: issueId
+    }));
+    
+    // Use upsert to avoid duplicate errors
+    const { error } = await supabase.from('message_issues').upsert(inserts, {
+      onConflict: 'message_id,issue_id',
+      ignoreDuplicates: true
+    });
+    
+    if (error) console.error('Error linking messages to issue:', error);
   }
 
 };

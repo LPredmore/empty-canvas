@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { parseFileWithAI } from '../services/ai';
-import { Person, SourceType, MessageDirection, Role } from '../types';
+import { Person, SourceType, MessageDirection, Role, AgreementItem, Issue } from '../types';
+import { ConversationAnalysisResult, AnalysisSummary } from '../types/analysisTypes';
 import { parseOFWExport, parseGenericText, parseGmailExport, ParsedConversation } from '../utils/parsers';
-import { X, Upload, Calendar, Users, ArrowRight, Save, Loader2, CheckCircle2, FileText, Trash2, FileType } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { 
+  X, Upload, Calendar, Users, ArrowRight, Save, Loader2, CheckCircle2, 
+  FileText, Trash2, FileType, AlertTriangle, Brain, Shield, TrendingUp
+} from 'lucide-react';
 import { format } from 'date-fns';
 
 interface ImportWizardProps {
@@ -15,6 +20,7 @@ interface ImportWizardProps {
 export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onSuccess }) => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const [existingPeople, setExistingPeople] = useState<Person[]>([]);
 
   // Form State
@@ -26,7 +32,11 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   // Parsed Data State
   const [parsedData, setParsedData] = useState<ParsedConversation | null>(null);
   const [conversationTitle, setConversationTitle] = useState('');
-  const [nameMapping, setNameMapping] = useState<Record<string, string>>({}); // "Luke Predmore" -> "person_uuid"
+  const [nameMapping, setNameMapping] = useState<Record<string, string>>({});
+  
+  // Analysis State
+  const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
+  const [showAnalysisSummary, setShowAnalysisSummary] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,10 +54,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         let result: ParsedConversation;
 
         if (importMode === 'file' && selectedFile) {
-            // Use AI Parsing
             result = await parseFileWithAI(selectedFile);
         } else {
-            // Use Manual Regex Parsing
             if (sourceType === SourceType.OFW) {
                 result = parseOFWExport(rawContent);
             } else if (sourceType === SourceType.Email) {
@@ -60,10 +68,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         setParsedData(result);
         setConversationTitle(result.title);
         
-        // Attempt to auto-map people
         const newMapping: Record<string, string> = {};
         result.participants.forEach(name => {
-            // Simple exact match or first name match
             const match = existingPeople.find(p => 
                 p.fullName.toLowerCase() === name.toLowerCase() || 
                 p.fullName.toLowerCase().includes(name.toLowerCase())
@@ -71,7 +77,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             if (match) {
                 newMapping[name] = match.id;
             } else {
-                newMapping[name] = 'new'; // Default to create new
+                newMapping[name] = 'new';
             }
         });
         setNameMapping(newMapping);
@@ -85,21 +91,254 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     }
   };
 
+  const runConversationAnalysis = async (
+    conversationId: string,
+    savedMessages: Array<{ id: string; senderId: string; receiverId?: string; rawText: string; sentAt: string }>,
+    participantIds: string[]
+  ): Promise<AnalysisSummary | null> => {
+    try {
+      // Fetch all context needed for analysis
+      const [agreementItems, existingIssues, relationships] = await Promise.all([
+        api.getAllActiveAgreementItems(),
+        api.getIssues(),
+        Promise.all(participantIds.map(id => api.getPersonRelationships(id)))
+      ]);
+
+      // Build participant data with relationships
+      const participants = participantIds.map((id, idx) => {
+        const person = existingPeople.find(p => p.id === id);
+        const personRelationships = relationships[idx] || [];
+        return {
+          id,
+          fullName: person?.fullName || 'Unknown',
+          role: person?.role || 'Other',
+          roleContext: person?.roleContext,
+          relationships: personRelationships.map(r => ({
+            relatedPersonId: r.relatedPersonId,
+            relatedPersonName: existingPeople.find(p => p.id === r.relatedPersonId)?.fullName || 'Unknown',
+            relationshipType: r.relationshipType
+          }))
+        };
+      });
+
+      // Find the "Me" person
+      const mePerson = existingPeople.find(p => p.role === Role.Me);
+      const mePersonId = mePerson?.id || participantIds[0];
+
+      // Call the analysis edge function
+      const { data, error } = await supabase.functions.invoke('analyze-conversation-import', {
+        body: {
+          conversationId,
+          messages: savedMessages,
+          participants,
+          agreementItems: agreementItems.map(item => ({
+            id: item.id,
+            topic: item.topic,
+            fullText: item.fullText,
+            summary: item.summary
+          })),
+          existingIssues: existingIssues.map(issue => ({
+            id: issue.id,
+            title: issue.title,
+            description: issue.description,
+            status: issue.status,
+            priority: issue.priority
+          })),
+          mePersonId
+        }
+      });
+
+      if (error) {
+        console.error('Analysis error:', error);
+        return null;
+      }
+
+      const analysisResult = data as ConversationAnalysisResult;
+
+      // Process the analysis results
+      await processAnalysisResults(conversationId, analysisResult, savedMessages);
+
+      // Build summary for user
+      const summary: AnalysisSummary = {
+        conversationTone: analysisResult.conversationAnalysis?.overallTone || 'neutral',
+        issuesCreated: analysisResult.issueActions?.filter(a => a.action === 'create').length || 0,
+        issuesUpdated: analysisResult.issueActions?.filter(a => a.action === 'update').length || 0,
+        violationsDetected: analysisResult.agreementViolations?.length || 0,
+        peopleAnalyzed: analysisResult.personAnalyses?.length || 0,
+        keyFindings: extractKeyFindings(analysisResult)
+      };
+
+      return summary;
+
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      return null;
+    }
+  };
+
+  const processAnalysisResults = async (
+    conversationId: string,
+    analysis: ConversationAnalysisResult,
+    savedMessages: Array<{ id: string; senderId: string; receiverId?: string; rawText: string; sentAt: string }>
+  ) => {
+    // 1. Save conversation analysis
+    if (analysis.conversationAnalysis) {
+      await api.saveConversationAnalysis({
+        conversationId,
+        summary: analysis.conversationAnalysis.summary,
+        overallTone: analysis.conversationAnalysis.overallTone,
+        keyTopics: analysis.conversationAnalysis.keyTopics || [],
+        agreementViolations: analysis.agreementViolations || [],
+        messageAnnotations: analysis.messageAnnotations || []
+      });
+    }
+
+    // 2. Process issue actions
+    const createdIssueIds: Record<string, string> = {};
+    
+    for (const issueAction of (analysis.issueActions || [])) {
+      try {
+        if (issueAction.action === 'create') {
+          const newIssue = await api.createIssue({
+            title: issueAction.title,
+            description: issueAction.description,
+            priority: issueAction.priority as any,
+            status: issueAction.status as any
+          });
+          createdIssueIds[issueAction.title] = newIssue.id;
+          
+          // Link messages to the new issue
+          if (issueAction.linkedMessageIds?.length > 0) {
+            await api.linkMessagesToIssue(issueAction.linkedMessageIds, newIssue.id);
+          }
+          
+          // Link conversation to issue
+          await api.linkConversationToIssue(conversationId, newIssue.id, issueAction.reasoning);
+          
+        } else if (issueAction.action === 'update' && issueAction.issueId) {
+          await api.updateIssue(issueAction.issueId, {
+            description: issueAction.description,
+            priority: issueAction.priority as any,
+            status: issueAction.status as any
+          });
+          
+          // Link messages to existing issue
+          if (issueAction.linkedMessageIds?.length > 0) {
+            await api.linkMessagesToIssue(issueAction.linkedMessageIds, issueAction.issueId);
+          }
+          
+          // Link conversation to issue
+          await api.linkConversationToIssue(conversationId, issueAction.issueId, issueAction.reasoning);
+        }
+      } catch (issueError) {
+        console.error('Error processing issue action:', issueError);
+      }
+    }
+
+    // 3. Create profile notes from person analyses
+    const notesToCreate: Array<{ personId: string; type: 'observation' | 'strategy' | 'pattern'; content: string }> = [];
+    
+    for (const personAnalysis of (analysis.personAnalyses || [])) {
+      // Save clinical assessment as observation
+      if (personAnalysis.clinicalAssessment?.summary) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'observation',
+          content: `## Clinical Assessment (${new Date().toLocaleDateString()})\n\n${personAnalysis.clinicalAssessment.summary}\n\n**Communication Style:** ${personAnalysis.clinicalAssessment.communicationStyle}\n\n**Emotional Regulation:** ${personAnalysis.clinicalAssessment.emotionalRegulation}\n\n**Boundary Respect:** ${personAnalysis.clinicalAssessment.boundaryRespect}\n\n**Co-parenting Cooperation:** ${personAnalysis.clinicalAssessment.coparentingCooperation}`
+        });
+      }
+
+      // Save observations
+      for (const observation of (personAnalysis.strategicNotes?.observations || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'observation',
+          content: observation
+        });
+      }
+
+      // Save patterns
+      for (const pattern of (personAnalysis.strategicNotes?.patterns || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'pattern',
+          content: pattern
+        });
+      }
+
+      // Save strategies
+      for (const strategy of (personAnalysis.strategicNotes?.strategies || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'strategy',
+          content: strategy
+        });
+      }
+
+      // Save concerns as observations
+      for (const concern of (personAnalysis.concerns || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'observation',
+          content: `⚠️ **${concern.type.toUpperCase()}** (Severity: ${concern.severity})\n\n${concern.description}\n\nEvidence: ${concern.evidence.join('; ')}`
+        });
+      }
+    }
+
+    if (notesToCreate.length > 0) {
+      await api.createProfileNotesBulk(notesToCreate);
+    }
+  };
+
+  const extractKeyFindings = (analysis: ConversationAnalysisResult): string[] => {
+    const findings: string[] = [];
+    
+    // Add tone finding
+    if (analysis.conversationAnalysis?.overallTone) {
+      const tone = analysis.conversationAnalysis.overallTone;
+      if (tone === 'hostile' || tone === 'contentious') {
+        findings.push(`Conversation tone detected as ${tone}`);
+      }
+    }
+
+    // Add violation findings
+    const severeViolations = (analysis.agreementViolations || []).filter(v => v.severity === 'severe');
+    if (severeViolations.length > 0) {
+      findings.push(`${severeViolations.length} severe agreement violation(s) detected`);
+    }
+
+    // Add high-severity concerns
+    for (const personAnalysis of (analysis.personAnalyses || [])) {
+      const highConcerns = (personAnalysis.concerns || []).filter(c => c.severity === 'high');
+      if (highConcerns.length > 0) {
+        findings.push(`${highConcerns.length} high-priority concern(s) identified`);
+        break;
+      }
+    }
+
+    // Add key topics
+    const topics = analysis.conversationAnalysis?.keyTopics || [];
+    if (topics.length > 0) {
+      findings.push(`Key topics: ${topics.slice(0, 3).join(', ')}`);
+    }
+
+    return findings;
+  };
+
   const handleSave = async () => {
     if (!parsedData) return;
     setLoading(true);
     
     try {
-        // 1. Resolve People IDs (create new if needed)
+        // 1. Resolve People IDs
         const finalPersonIds: string[] = [];
         const nameToIdMap: Record<string, string> = {};
 
-        // Explicitly cast to string[] to avoid TS unknown type errors
         const participants = Array.from(parsedData.participants) as string[];
         for (const name of participants) {
             const action = nameMapping[name];
             if (action === 'new') {
-                const newPerson = await api.createPerson({ fullName: name, role: Role.Parent }); // Default role
+                const newPerson = await api.createPerson({ fullName: name, role: Role.Parent });
                 finalPersonIds.push(newPerson.id);
                 nameToIdMap[name] = newPerson.id;
             } else if (action && action !== 'ignore') {
@@ -108,13 +347,10 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             }
         }
 
-        // 2. Prepare Messages with resolved sender and receiver IDs
+        // 2. Prepare Messages
         const messagesToSave = parsedData.messages.map(msg => {
             const senderId = nameToIdMap[msg.senderName];
             const receiverId = nameToIdMap[msg.receiverName];
-            
-            // Heuristic for Direction if AI didn't catch it perfectly or user changed mapping:
-            // If the sender maps to "ME", it's outbound.
             const senderPerson = existingPeople.find(p => p.id === senderId);
             const direction = senderPerson?.role === Role.Me ? MessageDirection.Outbound : MessageDirection.Inbound;
 
@@ -125,14 +361,14 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                 receiverId: receiverId || undefined,
                 direction: direction
             };
-        }).filter(m => m.senderId); // Ensure we have a sender
+        }).filter(m => m.senderId);
 
-        // 3. Calculate date range from messages
+        // 3. Calculate date range
         const sortedMessages = [...parsedData.messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
         const firstDate = sortedMessages[0]?.sentAt.toISOString();
         const lastDate = sortedMessages[sortedMessages.length - 1]?.sentAt.toISOString();
 
-        // 4. Create Conversation via API
+        // 4. Create Conversation
         const preview = parsedData.messages[0]?.body.substring(0, 100) + '...' || '';
         
         const newConversation = await api.importConversation(
@@ -147,19 +383,60 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             messagesToSave
         );
 
-        onSuccess(newConversation.id);
-        onClose();
+        // 5. Get the saved messages with their IDs
+        const savedMessages = await api.getMessages(newConversation.id);
+        const messagesForAnalysis = savedMessages.map(m => ({
+          id: m.id,
+          senderId: m.senderId,
+          receiverId: m.receiverId,
+          rawText: m.rawText,
+          sentAt: m.sentAt
+        }));
+
+        setLoading(false);
+        setAnalysisLoading(true);
+
+        // 6. Run AI analysis
+        const summary = await runConversationAnalysis(
+          newConversation.id,
+          messagesForAnalysis,
+          finalPersonIds
+        );
+
+        setAnalysisLoading(false);
+
+        if (summary) {
+          setAnalysisSummary(summary);
+          setShowAnalysisSummary(true);
+        } else {
+          // If analysis failed, just proceed
+          onSuccess(newConversation.id);
+          handleReset();
+        }
         
-        // Reset
-        setStep(1);
-        setRawContent('');
-        setSelectedFile(null);
-        setParsedData(null);
     } catch (error) {
         console.error(error);
         alert('Failed to save conversation.');
-    } finally {
         setLoading(false);
+        setAnalysisLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setStep(1);
+    setRawContent('');
+    setSelectedFile(null);
+    setParsedData(null);
+    setAnalysisSummary(null);
+    setShowAnalysisSummary(false);
+  };
+
+  const handleAnalysisDismiss = () => {
+    if (parsedData) {
+      // We need to get the conversation ID - it was created in handleSave
+      // For now, just close and reset
+      onClose();
+      handleReset();
     }
   };
 
@@ -170,6 +447,117 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   };
 
   if (!isOpen) return null;
+
+  // Analysis loading overlay
+  if (analysisLoading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+        <div className="bg-white rounded-xl shadow-xl p-8 max-w-md text-center">
+          <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Brain className="w-8 h-8 text-indigo-600 animate-pulse" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">Analyzing Conversation</h2>
+          <p className="text-slate-600 mb-4">
+            Checking for agreement violations, identifying patterns, and generating clinical assessments...
+          </p>
+          <Loader2 className="w-6 h-6 animate-spin mx-auto text-indigo-600" />
+        </div>
+      </div>
+    );
+  }
+
+  // Analysis summary modal
+  if (showAnalysisSummary && analysisSummary) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+        <div className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-emerald-50">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">Import Complete</h2>
+                <p className="text-sm text-slate-600">Conversation analyzed and processed</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-4">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-slate-600 text-sm mb-1">
+                  <TrendingUp className="w-4 h-4" />
+                  Tone
+                </div>
+                <div className={`font-bold capitalize ${
+                  analysisSummary.conversationTone === 'hostile' ? 'text-red-600' :
+                  analysisSummary.conversationTone === 'contentious' ? 'text-orange-600' :
+                  analysisSummary.conversationTone === 'cooperative' ? 'text-emerald-600' :
+                  'text-slate-700'
+                }`}>
+                  {analysisSummary.conversationTone}
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-slate-600 text-sm mb-1">
+                  <Users className="w-4 h-4" />
+                  People Analyzed
+                </div>
+                <div className="font-bold text-slate-700">{analysisSummary.peopleAnalyzed}</div>
+              </div>
+
+              {analysisSummary.issuesCreated > 0 && (
+                <div className="bg-amber-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-amber-700 text-sm mb-1">
+                    <AlertTriangle className="w-4 h-4" />
+                    Issues Created
+                  </div>
+                  <div className="font-bold text-amber-700">{analysisSummary.issuesCreated}</div>
+                </div>
+              )}
+
+              {analysisSummary.violationsDetected > 0 && (
+                <div className="bg-red-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-red-700 text-sm mb-1">
+                    <Shield className="w-4 h-4" />
+                    Violations
+                  </div>
+                  <div className="font-bold text-red-700">{analysisSummary.violationsDetected}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Key Findings */}
+            {analysisSummary.keyFindings.length > 0 && (
+              <div className="border-t border-slate-100 pt-4">
+                <h3 className="text-sm font-bold text-slate-700 mb-2">Key Findings</h3>
+                <ul className="space-y-1">
+                  {analysisSummary.keyFindings.map((finding, idx) => (
+                    <li key={idx} className="text-sm text-slate-600 flex items-start gap-2">
+                      <span className="text-indigo-500 mt-1">•</span>
+                      {finding}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+            <button
+              onClick={handleAnalysisDismiss}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -401,7 +789,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
              >
                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-               Import {parsedData?.messages.length} Messages
+               Import & Analyze {parsedData?.messages.length} Messages
              </button>
           )}
         </div>
