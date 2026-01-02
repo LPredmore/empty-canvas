@@ -91,8 +91,20 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         setStep(2);
 
     } catch (error: any) {
-        console.error(error);
-        alert(error.message || "Failed to parse content.");
+        console.error('Parse error:', error);
+        const errorMessage = error?.message || 'Unknown error';
+        
+        if (errorMessage.includes('PDF processing engine')) {
+          alert('The PDF processor failed to initialize. Please refresh the page and try again.');
+        } else if (errorMessage.includes('exceeds maximum size') || errorMessage.includes('413')) {
+          alert('This file is too large to process. Try uploading a shorter document or splitting it into parts.');
+        } else if (errorMessage.includes('Rate limit') || errorMessage.includes('429')) {
+          alert('Too many requests. Please wait a moment and try again.');
+        } else if (errorMessage.includes('corrupted') || errorMessage.includes('encrypted')) {
+          alert('Failed to read the PDF. The file may be corrupted, encrypted, or in an unsupported format.');
+        } else {
+          alert(`Failed to parse file: ${errorMessage}`);
+        }
     } finally {
         setLoading(false);
     }

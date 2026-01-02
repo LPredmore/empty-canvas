@@ -90,11 +90,22 @@ serve(async (req) => {
       case 'parse-file':
         systemPrompt = SYSTEM_PROMPTS.parseFile;
         if (fileData?.base64) {
+          // Single image (screenshot, photo)
           userContent = [
             { type: 'text', text: 'Extract conversation data from this image:' },
             { type: 'image_url', image_url: { url: fileData.base64 } }
           ];
+        } else if (fileData?.images && Array.isArray(fileData.images)) {
+          // Multiple images (scanned PDF pages)
+          userContent = [
+            { type: 'text', text: `Extract conversation data from these ${fileData.images.length} PDF pages. Combine all messages into a single chronological list:` },
+            ...fileData.images.map((img: string) => ({ 
+              type: 'image_url', 
+              image_url: { url: img } 
+            }))
+          ];
         } else if (fileData?.text) {
+          // Text content (extracted PDF text or text file)
           userContent = `Extract conversation data from this text:\n\n${fileData.text}`;
         } else {
           throw new Error('No file data provided');
@@ -116,6 +127,33 @@ serve(async (req) => {
       ...(messages || []),
       ...(userContent ? [{ role: 'user', content: userContent }] : [])
     ];
+
+    // Estimate token count and reject oversized requests before API call
+    const estimateTokens = (content: any): number => {
+      if (typeof content === 'string') {
+        return Math.ceil(content.length / 4);
+      }
+      if (Array.isArray(content)) {
+        return content.reduce((sum: number, item: any) => {
+          if (item.type === 'text') return sum + Math.ceil((item.text?.length || 0) / 4);
+          if (item.type === 'image_url') return sum + 2000; // Conservative per-image estimate
+          return sum;
+        }, 0);
+      }
+      return Math.ceil(JSON.stringify(content).length / 4);
+    };
+
+    const totalTokens = apiMessages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
+    if (totalTokens > 100000) {
+      console.error(`Request too large: estimated ${totalTokens} tokens`);
+      return new Response(
+        JSON.stringify({ 
+          error: 'File content exceeds maximum size. Please use a smaller file or split into multiple uploads.',
+          estimatedTokens: totalTokens
+        }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     const requestBody: any = {
       model: selectedModel,

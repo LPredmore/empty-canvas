@@ -46,11 +46,33 @@ async function fileToBase64(file: File): Promise<string> {
  * Parse a file (image or text) using AI to extract conversation data
  */
 export async function parseFileWithAI(file: File): Promise<ParsedConversation> {
-  let fileData: { base64?: string; text?: string } = {};
+  let fileData: { base64?: string; text?: string; images?: string[] } = {};
 
   if (file.type.startsWith('image/')) {
+    // Images: send as base64 for Vision API
     fileData.base64 = await fileToBase64(file);
+  } else if (file.type === 'application/pdf') {
+    // PDFs: use existing extraction infrastructure
+    if (!isPdfWorkerReady()) {
+      const diagnostics = getPdfWorkerDiagnostics();
+      throw new Error(
+        'PDF processing engine failed to start. Please refresh the page and try again. ' +
+        `(Worker diagnostics: ${JSON.stringify(diagnostics)})`
+      );
+    }
+    
+    const pdfInfo = await extractTextFromPDF(file);
+    
+    if (pdfInfo.isLikelyScanned) {
+      // Scanned PDF: convert to images for Vision API (max 10 pages)
+      const { images } = await convertPDFPagesToImages(file, 10);
+      fileData.images = images;
+    } else {
+      // Regular PDF: use extracted text (already token-limited to 80k)
+      fileData.text = pdfInfo.totalText;
+    }
   } else {
+    // Text files: read as text
     fileData.text = await file.text();
   }
 
@@ -191,10 +213,27 @@ export async function chatWithAssistant(
   await api.saveAssistantMessage(sessionId, AssistantSenderType.User, userContent);
 
   // Prepare file data if provided
-  let fileData: { base64?: string; text?: string } | undefined;
+  let fileData: { base64?: string; text?: string; images?: string[] } | undefined;
   if (file) {
     if (file.type.startsWith('image/')) {
       fileData = { base64: await fileToBase64(file) };
+    } else if (file.type === 'application/pdf') {
+      // PDFs: use existing extraction infrastructure
+      if (!isPdfWorkerReady()) {
+        return { stream: null, error: 'PDF processor not ready. Please refresh and try again.' };
+      }
+      try {
+        const pdfInfo = await extractTextFromPDF(file);
+        if (pdfInfo.isLikelyScanned) {
+          const { images } = await convertPDFPagesToImages(file, 5); // Fewer pages for chat
+          fileData = { images };
+        } else {
+          fileData = { text: pdfInfo.totalText };
+        }
+      } catch (pdfError) {
+        console.error('PDF extraction failed:', pdfError);
+        return { stream: null, error: 'Failed to read PDF. The file may be corrupted or encrypted.' };
+      }
     } else {
       fileData = { text: await file.text() };
     }
