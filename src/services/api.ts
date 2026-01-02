@@ -154,6 +154,27 @@ export const api = {
     };
   },
 
+  updatePersonRelationship: async (id: string, updates: Partial<PersonRelationship>): Promise<PersonRelationship> => {
+    const dbUpdates: any = {};
+    if (updates.relationshipType) dbUpdates.relationship_type = updates.relationshipType;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+    
+    const { data, error } = await supabase.from('person_relationships')
+      .update(dbUpdates)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return {
+      id: data.id,
+      personId: data.person_id,
+      relatedPersonId: data.related_person_id,
+      relationshipType: data.relationship_type,
+      description: data.description
+    };
+  },
+
   getPersonRelationships: async (personId: string): Promise<PersonRelationship[]> => {
     const data = await handleResponse(
       supabase.from('person_relationships')
