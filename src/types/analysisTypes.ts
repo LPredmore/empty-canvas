@@ -1,5 +1,27 @@
 // Types for conversation analysis results
 
+// NEW: Claims Ledger for evidence mapping
+export interface ClaimEntry {
+  claimText: string;
+  speakerPersonId: string;
+  category: 'professional_guidance' | 'agreement' | 'factual' | 'accusation' | 'commitment' | 'process';
+  evidence: string;
+  verificationStatus: 'supported' | 'contradicted' | 'ambiguous';
+  notes: string;
+}
+
+// NEW: Alternative interpretations section
+export interface AlternativeInterpretation {
+  findingDescription: string;
+  alternativeExplanation: string;
+}
+
+// NEW: Missing context section
+export interface MissingContext {
+  description: string;
+  howItCouldChangeConclusions: string;
+}
+
 export interface ConversationStateResult {
   status: 'open' | 'resolved';
   pendingResponderName: string | null;
@@ -10,9 +32,12 @@ export interface ConversationStateResult {
 export interface ConversationAnalysisResult {
   conversationAnalysis: {
     summary: string;
-    overallTone: 'cooperative' | 'neutral' | 'contentious' | 'hostile';
+    overallTone: 'cooperative' | 'neutral' | 'tense' | 'contentious' | 'hostile';
     keyTopics: string[];
   };
+  claimsLedger?: ClaimEntry[];
+  alternativeInterpretations?: AlternativeInterpretation[];
+  missingContext?: MissingContext[];
   conversationState?: ConversationStateResult;
   issueActions: IssueAction[];
   agreementViolations: AgreementViolation[];
@@ -33,7 +58,7 @@ export interface DetectedAgreement {
   reasoning: string;
 }
 
-// NEW: Person contribution to an issue with role attribution
+// Person contribution to an issue with role attribution
 export interface IssuePersonContribution {
   personId: string;
   contributionType: 'primary_contributor' | 'affected_party' | 'secondary_contributor' | 'resolver' | 'enabler' | 'witness' | 'involved';
@@ -64,22 +89,43 @@ export interface AgreementViolation {
   severity: 'minor' | 'moderate' | 'severe';
 }
 
+// NEW: Behavioral assessment (replaces clinicalAssessment)
+export interface BehavioralAssessment {
+  summary: string;
+  cooperationLevel: 'high' | 'moderate' | 'low' | 'obstructive';
+  flexibilityLevel: 'high' | 'moderate' | 'low' | 'rigid';
+  responsivenessLevel: 'high' | 'moderate' | 'low' | 'avoidant';
+  accountabilityLevel: 'high' | 'moderate' | 'low' | 'deflecting';
+  boundaryRespect: 'appropriate' | 'moderate' | 'poor';
+}
+
+// NEW: Notable patterns structure
+export interface NotablePatterns {
+  positive: string[];
+  concerning: string[];
+}
+
 export interface PersonAnalysisResult {
   personId: string;
-  clinicalAssessment: {
+  // NEW structure (preferred)
+  behavioralAssessment?: BehavioralAssessment;
+  notablePatterns?: NotablePatterns;
+  interactionRecommendations?: string[];
+  // OLD structure (kept for backward compatibility)
+  clinicalAssessment?: {
     summary: string;
     communicationStyle: string;
     emotionalRegulation: string;
     boundaryRespect: string;
     coparentingCooperation: string;
   };
-  strategicNotes: {
+  strategicNotes?: {
     observations: string[];
     patterns: string[];
     strategies: string[];
   };
   concerns: PersonConcern[];
-  monitoringPriorities: string[];
+  monitoringPriorities?: string[];
   diagnosticIndicators?: string[];
 }
 
@@ -92,37 +138,47 @@ export interface PersonConcern {
 
 // Expanded flag types for behavioral attribution
 export type MessageFlagType = 
-  // Existing types
-  | 'agreement_violation'
-  | 'concerning_language' 
-  | 'manipulation_tactic'
-  | 'positive_cooperation'
-  // Expanded behavioral indicators
+  // Tier 1 - Resolution-blocking / High-signal
   | 'misrepresenting_guidance'
+  | 'guidance_downshift'
+  | 'professional_recommendation_ignored'
+  | 'agreement_violation'
+  | 'safety_concern'
+  // Tier 2 - Significant
+  | 'process_gating'
+  | 'channel_shift_request'
+  | 'communication_stonewalling'
   | 'selective_response'
   | 'deflection_tactic'
   | 'accountability_avoidance'
-  | 'documentation_resistance'
-  | 'gaslighting_indicator'
   | 'unilateral_decision'
-  | 'boundary_violation'
+  | 'documentation_resistance'
   | 'parental_alienation_indicator'
-  | 'scheduling_obstruction'
-  | 'financial_non_compliance'
-  | 'communication_stonewalling'
+  // Tier 3 - Pattern tracking
+  | 'concerning_language'
+  | 'boundary_violation'
   | 'false_equivalence'
   | 'context_shifting'
-  | 'professional_recommendation_ignored';
+  | 'manipulation_tactic'
+  | 'gaslighting_indicator'
+  | 'scheduling_obstruction'
+  | 'financial_non_compliance'
+  // Tier 4 - Positive behaviors
+  | 'positive_cooperation'
+  | 'constructive_problem_solving'
+  | 'repair_attempt'
+  | 'appropriate_flexibility';
 
 export interface MessageAnnotation {
   messageId: string;
   flags: Array<{
     type: MessageFlagType | string; // string fallback for old data
     description: string;
-    // NEW optional fields (missing in old data)
-    attributedToPersonId?: string;
-    severity?: 'low' | 'medium' | 'high';
-    evidence?: string;
+    attributedToPersonId: string; // Required
+    severity: 'low' | 'medium' | 'high';
+    evidence: string;
+    impact?: string; // How it affects resolution
+    verificationStatus?: 'supported' | 'contradicted' | 'ambiguous';
   }>;
 }
 

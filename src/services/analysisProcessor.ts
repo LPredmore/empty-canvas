@@ -82,8 +82,17 @@ export async function processAnalysisResults(
   const notesToCreate: Array<{ personId: string; type: 'observation' | 'strategy' | 'pattern'; content: string }> = [];
   
   for (const personAnalysis of (analysis.personAnalyses || [])) {
-    // Save clinical assessment as observation
-    if (personAnalysis.clinicalAssessment?.summary) {
+    // Handle NEW behavioral assessment format (preferred)
+    if (personAnalysis.behavioralAssessment?.summary) {
+      const ba = personAnalysis.behavioralAssessment;
+      notesToCreate.push({
+        personId: personAnalysis.personId,
+        type: 'observation',
+        content: `## Behavioral Assessment (${new Date().toLocaleDateString()})\n\n${ba.summary}\n\n**Interaction Quality:**\n- Cooperation: ${ba.cooperationLevel}\n- Flexibility: ${ba.flexibilityLevel}\n- Responsiveness: ${ba.responsivenessLevel}\n- Accountability: ${ba.accountabilityLevel}\n- Boundary Respect: ${ba.boundaryRespect}`
+      });
+    }
+    // Handle OLD clinical assessment format (backward compatibility)
+    else if (personAnalysis.clinicalAssessment?.summary) {
       notesToCreate.push({
         personId: personAnalysis.personId,
         type: 'observation',
@@ -91,34 +100,61 @@ export async function processAnalysisResults(
       });
     }
 
-    // Save observations
-    for (const observation of (personAnalysis.strategicNotes?.observations || [])) {
-      notesToCreate.push({
-        personId: personAnalysis.personId,
-        type: 'observation',
-        content: observation
-      });
+    // Handle NEW notable patterns format
+    if (personAnalysis.notablePatterns) {
+      if (personAnalysis.notablePatterns.positive?.length > 0) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'observation',
+          content: `**Positive Behaviors:**\n${personAnalysis.notablePatterns.positive.map(p => `- ${p}`).join('\n')}`
+        });
+      }
+      if (personAnalysis.notablePatterns.concerning?.length > 0) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'pattern',
+          content: `**Concerning Behaviors:**\n${personAnalysis.notablePatterns.concerning.map(p => `- ${p}`).join('\n')}`
+        });
+      }
     }
 
-    // Save patterns
-    for (const pattern of (personAnalysis.strategicNotes?.patterns || [])) {
-      notesToCreate.push({
-        personId: personAnalysis.personId,
-        type: 'pattern',
-        content: pattern
-      });
-    }
-
-    // Save strategies
-    for (const strategy of (personAnalysis.strategicNotes?.strategies || [])) {
+    // Handle NEW interaction recommendations format
+    if (personAnalysis.interactionRecommendations?.length > 0) {
       notesToCreate.push({
         personId: personAnalysis.personId,
         type: 'strategy',
-        content: strategy
+        content: `**Communication Strategies:**\n${personAnalysis.interactionRecommendations.map(r => `- ${r}`).join('\n')}`
       });
     }
 
-    // Save concerns as observations
+    // Handle OLD strategic notes format (backward compatibility)
+    if (personAnalysis.strategicNotes) {
+      for (const observation of (personAnalysis.strategicNotes.observations || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'observation',
+          content: observation
+        });
+      }
+
+      for (const pattern of (personAnalysis.strategicNotes.patterns || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'pattern',
+          content: pattern
+        });
+      }
+
+      for (const strategy of (personAnalysis.strategicNotes.strategies || [])) {
+        notesToCreate.push({
+          personId: personAnalysis.personId,
+          type: 'strategy',
+          content: strategy
+        });
+      }
+    }
+
+    // Save concerns as observations (works for both old and new formats)
     for (const concern of (personAnalysis.concerns || [])) {
       notesToCreate.push({
         personId: personAnalysis.personId,
