@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { generatePersonAnalysis, clarifyPerson } from '../services/ai';
 import { Person, Role, ProfileNote, Conversation, Issue, Event, ConversationTurn, SuggestedRelationship, PersonRelationship } from '../types';
-import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon, Pencil } from 'lucide-react';
+import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon, Pencil, Trash2 } from 'lucide-react';
 import { ClarificationModal } from './ClarificationModal';
 
 export const PeopleList: React.FC = () => {
@@ -320,6 +320,10 @@ export const PersonDetail: React.FC = () => {
   const [editRelDescription, setEditRelDescription] = useState('');
   const [updatingRel, setUpdatingRel] = useState(false);
 
+  // Delete Relationship State
+  const [deletingRel, setDeletingRel] = useState<(PersonRelationship & { relatedPerson?: Person }) | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   useEffect(() => {
     if (!id) return;
     loadData();
@@ -452,6 +456,20 @@ export const PersonDetail: React.FC = () => {
       console.error(e);
     } finally {
       setUpdatingRel(false);
+    }
+  };
+
+  const handleDeleteRelationship = async () => {
+    if (!deletingRel) return;
+    setIsDeleting(true);
+    try {
+      await api.deletePersonRelationship(deletingRel.id);
+      setDeletingRel(null);
+      loadData();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -608,13 +626,22 @@ export const PersonDetail: React.FC = () => {
                           <p className="text-sm text-slate-500 mt-1">{rel.description}</p>
                         )}
                       </Link>
-                      <button
-                        onClick={() => openEditRelModal(rel)}
-                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="Edit relationship"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => openEditRelModal(rel)}
+                          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Edit relationship"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeletingRel(rel)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete relationship"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))
                 )}
@@ -843,6 +870,37 @@ export const PersonDetail: React.FC = () => {
                 Save Changes
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Relationship Confirmation Modal */}
+      {deletingRel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-800">Delete Relationship</h3>
+              <button onClick={() => setDeletingRel(null)}><X className="w-5 h-5 text-slate-400 hover:text-slate-600" /></button>
+            </div>
+            <p className="text-slate-600 mb-6">
+              Are you sure you want to delete the relationship with <span className="font-medium text-slate-800">{deletingRel.relatedPerson?.fullName || 'this person'}</span>?
+            </p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setDeletingRel(null)}
+                className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleDeleteRelationship}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -190,6 +190,11 @@ export const api = {
     })) : [];
   },
 
+  deletePersonRelationship: async (id: string): Promise<void> => {
+    const { error } = await supabase.from('person_relationships').delete().eq('id', id);
+    if (error) throw error;
+  },
+
   // --- Issues ---
   getIssues: async (): Promise<Issue[]> => {
     const data = await handleResponse(supabase.from('issues').select('*').order('updated_at', { ascending: false }));
