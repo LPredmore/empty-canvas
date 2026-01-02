@@ -2,8 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { Issue, Event, Message, IssueStatus, IssuePriority, LegalClause, AgreementItem, Person } from '../types';
-import { CheckCircle2, Clock, AlertTriangle, Archive, ArrowUpCircle, Loader2, Plus, X, Scale, Handshake, Users } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, Archive, ArrowUpCircle, Loader2, Plus, X, Scale, Handshake, Users, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { format } from 'date-fns';
+import { getContributionLabel, getContributionBadgeStyle, VALENCE_ICONS, ContributionValence } from '../utils/contributionHelpers';
+
+type PersonWithContribution = Person & {
+  contributionType?: string;
+  contributionDescription?: string;
+  contributionValence?: string;
+};
 
 export const IssueList: React.FC = () => {
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -132,7 +139,7 @@ export const IssueDetail: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [relatedRules, setRelatedRules] = useState<{clauses: LegalClause[], items: AgreementItem[]}>({clauses: [], items: []});
-  const [involvedPeople, setInvolvedPeople] = useState<Person[]>([]);
+  const [involvedPeople, setInvolvedPeople] = useState<PersonWithContribution[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -231,21 +238,43 @@ export const IssueDetail: React.FC = () => {
                  </h3>
               </div>
               <div className="p-4 space-y-3">
-                 {involvedPeople.map(person => (
-                   <Link 
-                     key={person.id} 
-                     to={`/people/${person.id}`} 
-                     className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 transition-colors"
-                   >
-                     <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-bold text-sm">
-                       {person.fullName.charAt(0)}
-                     </div>
-                     <div>
-                       <div className="font-medium text-slate-800">{person.fullName}</div>
-                       <div className="text-xs text-slate-500 capitalize">{person.role}</div>
-                     </div>
-                   </Link>
-                 ))}
+                 {involvedPeople.map(person => {
+                   const valence = person.contributionValence as ContributionValence | undefined;
+                   const valenceInfo = valence ? VALENCE_ICONS[valence] : null;
+                   
+                   return (
+                     <Link 
+                       key={person.id} 
+                       to={`/people/${person.id}`} 
+                       className="block p-3 rounded-lg hover:bg-slate-50 transition-colors border border-slate-100"
+                     >
+                       <div className="flex items-start gap-3">
+                         <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-bold text-sm flex-shrink-0">
+                           {person.fullName.charAt(0)}
+                         </div>
+                         <div className="flex-1 min-w-0">
+                           <div className="flex items-center gap-2 flex-wrap">
+                             <span className="font-medium text-slate-800">{person.fullName}</span>
+                             <span className={`text-xs px-2 py-0.5 rounded-full border ${getContributionBadgeStyle(person.contributionType, person.contributionValence)}`}>
+                               {getContributionLabel(person.contributionType)}
+                             </span>
+                             {valenceInfo && (
+                               <span className={`text-sm font-bold ${valenceInfo.color}`}>
+                                 {valenceInfo.icon}
+                               </span>
+                             )}
+                           </div>
+                           <div className="text-xs text-slate-500 capitalize mt-0.5">{person.role}</div>
+                           {person.contributionDescription && (
+                             <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                               {person.contributionDescription}
+                             </p>
+                           )}
+                         </div>
+                       </div>
+                     </Link>
+                   );
+                 })}
                  {involvedPeople.length === 0 && (
                    <div className="text-slate-400 text-sm italic text-center py-2">
                      No people linked to this issue.

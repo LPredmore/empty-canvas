@@ -33,6 +33,14 @@ export interface DetectedAgreement {
   reasoning: string;
 }
 
+// NEW: Person contribution to an issue with role attribution
+export interface IssuePersonContribution {
+  personId: string;
+  contributionType: 'primary_contributor' | 'affected_party' | 'secondary_contributor' | 'resolver' | 'enabler' | 'witness' | 'involved';
+  contributionDescription: string;
+  contributionValence: 'positive' | 'negative' | 'neutral' | 'mixed';
+}
+
 export interface IssueAction {
   action: 'create' | 'update';
   issueId?: string;
@@ -41,7 +49,10 @@ export interface IssueAction {
   priority: 'low' | 'medium' | 'high';
   status: string;
   linkedMessageIds: string[];
-  involvedPersonIds: string[];
+  // OLD format (kept for backward compatibility)
+  involvedPersonIds?: string[];
+  // NEW format (preferred when available)
+  personContributions?: IssuePersonContribution[];
   reasoning: string;
 }
 
@@ -79,11 +90,39 @@ export interface PersonConcern {
   severity: 'low' | 'medium' | 'high';
 }
 
+// Expanded flag types for behavioral attribution
+export type MessageFlagType = 
+  // Existing types
+  | 'agreement_violation'
+  | 'concerning_language' 
+  | 'manipulation_tactic'
+  | 'positive_cooperation'
+  // Expanded behavioral indicators
+  | 'misrepresenting_guidance'
+  | 'selective_response'
+  | 'deflection_tactic'
+  | 'accountability_avoidance'
+  | 'documentation_resistance'
+  | 'gaslighting_indicator'
+  | 'unilateral_decision'
+  | 'boundary_violation'
+  | 'parental_alienation_indicator'
+  | 'scheduling_obstruction'
+  | 'financial_non_compliance'
+  | 'communication_stonewalling'
+  | 'false_equivalence'
+  | 'context_shifting'
+  | 'professional_recommendation_ignored';
+
 export interface MessageAnnotation {
   messageId: string;
   flags: Array<{
-    type: 'agreement_violation' | 'concerning_language' | 'manipulation_tactic' | 'positive_cooperation';
+    type: MessageFlagType | string; // string fallback for old data
     description: string;
+    // NEW optional fields (missing in old data)
+    attributedToPersonId?: string;
+    severity?: 'low' | 'medium' | 'high';
+    evidence?: string;
   }>;
 }
 

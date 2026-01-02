@@ -5,6 +5,13 @@ import { generatePersonAnalysis, clarifyPerson } from '../services/ai';
 import { Person, Role, ProfileNote, Conversation, Issue, Event, ConversationTurn, SuggestedRelationship, PersonRelationship, ConversationStatus } from '../types';
 import { Mail, Phone, MapPin, MessageSquare, AlertCircle, FileText, BrainCircuit, Loader2, Plus, X, Save, Link as LinkIcon, Pencil, Trash2, Clock } from 'lucide-react';
 import { ClarificationModal } from './ClarificationModal';
+import { getContributionLabel, getContributionBadgeStyle, VALENCE_ICONS, ContributionValence } from '../utils/contributionHelpers';
+
+type IssueWithContribution = Issue & {
+  contributionType?: string;
+  contributionDescription?: string;
+  contributionValence?: string;
+};
 
 export const PeopleList: React.FC = () => {
   const [people, setPeople] = useState<Person[]>([]);
@@ -295,7 +302,7 @@ export const PersonDetail: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [pendingConversations, setPendingConversations] = useState<Conversation[]>([]);
   const [notes, setNotes] = useState<ProfileNote[]>([]);
-  const [involvedIssues, setInvolvedIssues] = useState<Issue[]>([]);
+  const [involvedIssues, setInvolvedIssues] = useState<IssueWithContribution[]>([]);
   const [relationships, setRelationships] = useState<(PersonRelationship & { relatedPerson?: Person })[]>([]);
   const [allPeople, setAllPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
@@ -596,18 +603,42 @@ export const PersonDetail: React.FC = () => {
                <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4" /> Involved Issues
               </h3>
-              <div className="bg-white rounded-lg border border-slate-200 p-4">
-                <p className="text-sm text-slate-500 mb-4">
+              <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+                <p className="text-sm text-slate-500 px-4 pt-4 pb-2">
                   Issues where this person is involved (linked via events or analysis notes).
                 </p>
-                <div className="flex flex-wrap gap-2">
+                <div className="divide-y divide-slate-100">
                    {involvedIssues.length === 0 ? (
-                       <span className="text-xs text-slate-400 italic">No issues linked.</span>
-                   ) : involvedIssues.map(i => (
-                     <Link to={`/issues/${i.id}`} key={i.id} className="bg-amber-50 text-amber-800 px-3 py-1 rounded-full text-xs font-medium border border-amber-100 hover:bg-amber-100">
-                       {i.title}
-                     </Link>
-                   ))}
+                       <div className="px-4 py-3 text-xs text-slate-400 italic">No issues linked.</div>
+                   ) : involvedIssues.map(issue => {
+                     const valence = issue.contributionValence as ContributionValence | undefined;
+                     const valenceInfo = valence ? VALENCE_ICONS[valence] : null;
+                     
+                     return (
+                       <Link 
+                         to={`/issues/${issue.id}`} 
+                         key={issue.id} 
+                         className="block px-4 py-3 hover:bg-slate-50 transition-colors"
+                       >
+                         <div className="flex items-center gap-2 flex-wrap mb-1">
+                           <span className="font-medium text-slate-800 text-sm">{issue.title}</span>
+                           <span className={`text-xs px-2 py-0.5 rounded-full border ${getContributionBadgeStyle(issue.contributionType, issue.contributionValence)}`}>
+                             {getContributionLabel(issue.contributionType)}
+                           </span>
+                           {valenceInfo && (
+                             <span className={`text-sm font-bold ${valenceInfo.color}`}>
+                               {valenceInfo.icon}
+                             </span>
+                           )}
+                         </div>
+                         {issue.contributionDescription && (
+                           <p className="text-xs text-slate-600 leading-relaxed">
+                             {issue.contributionDescription}
+                           </p>
+                         )}
+                       </Link>
+                     );
+                   })}
                 </div>
               </div>
             </div>
