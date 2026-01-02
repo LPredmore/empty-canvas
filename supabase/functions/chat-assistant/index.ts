@@ -8,7 +8,7 @@ const corsHeaders = {
 
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const DEFAULT_MODEL = 'openai/gpt-4o';
+const DEFAULT_MODEL = 'openai/gpt-4.1';
 
 // System prompts for different operations
 const SYSTEM_PROMPTS = {
@@ -54,8 +54,131 @@ Be direct and specific. Cite evidence from the provided data. Structure your res
   "concerns": ["Concern 1", "Concern 2"],
   "strategies": ["Strategy 1", "Strategy 2"],
   "monitoringPriorities": ["Priority 1", "Priority 2"]
+}`,
+
+  extractEntities: `You are an entity extraction specialist for a co-parenting case management system.
+Given a user message and a list of people in the case, identify:
+1. Which people are being discussed (by name, nickname, or role like "my ex", "the therapist", "our daughter")
+2. What topics are being referenced that might relate to tracked issues
+3. Whether the user is asking about rules, agreements, or legal documents
+4. Whether the user is asking about past conversations or communications
+
+IMPORTANT: 
+- Include "Me" or the user themselves if they are part of the conversation being discussed
+- Match partial names (e.g., "James" matches "James Smith")
+- Match role references (e.g., "my ex" likely refers to a Parent role, "the kids" to Child roles)
+
+Return ONLY valid JSON with no markdown formatting:
+{
+  "mentionedPeopleIds": ["id1", "id2"],
+  "topicKeywords": ["schedule", "custody"],
+  "needsRules": true,
+  "needsConversations": true,
+  "reasoning": "Brief explanation of why these were selected"
 }`
 };
+
+/**
+ * Build a context-aware system prompt with case data
+ */
+function buildContextualSystemPrompt(context: any): string {
+  const sections: string[] = [];
+  
+  sections.push(`You are CoParent Intel, a forensic advisor for high-conflict co-parenting.
+
+## YOUR MANDATE
+- NEVER give generic platitudes. ALWAYS cite specific evidence from the case data below.
+- When drafting responses: Court-ready, BIFF-compliant (Brief, Informative, Friendly, Firm)
+- When analyzing: Reference specific dates, quotes, and agreement clauses
+- If a rule exists that applies, CITE IT by topic name
+
+## CRITICAL RULES
+1. Reference the case data below - never ask for information that's provided
+2. Be direct and specific - cite dates, names, and evidence
+3. Identify manipulation tactics, JADE violations, baiting attempts
+4. Draft communications that remove emotion and focus on verifiable facts
+5. If asked about someone not in the data, say so clearly
+
+---`);
+
+  // PEOPLE section
+  if (context.people?.length > 0) {
+    sections.push(`## PEOPLE INVOLVED IN THIS CONVERSATION\n`);
+    for (const person of context.people) {
+      const notes = context.profileNotes?.filter((n: any) => n.personId === person.id) || [];
+      const rels = context.relationships?.filter((r: any) => 
+        r.personId === person.id || r.relatedPersonId === person.id
+      ) || [];
+      
+      const relText = rels.length > 0 
+        ? rels.map((r: any) => `${r.relationshipType}: ${r.description || 'N/A'}`).join(', ')
+        : 'None documented';
+      
+      const noteText = notes.length > 0
+        ? notes.map((n: any) => `- [${n.type}] ${n.content}`).join('\n')
+        : '- None on file';
+      
+      sections.push(`### ${person.fullName} (${person.role})
+Context: ${person.roleContext || 'None specified'}
+Relationships: ${relText}
+Clinical Notes:
+${noteText}`);
+    }
+  }
+
+  // ISSUES section
+  if (context.issues?.length > 0) {
+    sections.push(`\n## TRACKED ISSUES INVOLVING THESE PEOPLE\n`);
+    for (const issue of context.issues) {
+      sections.push(`### ${issue.title} [${issue.status} / ${issue.priority}]
+${issue.description}
+Last Updated: ${issue.updatedAt}`);
+    }
+  }
+
+  // RULES section
+  if (context.rules?.length > 0) {
+    sections.push(`\n## APPLICABLE RULES & AGREEMENTS\n`);
+    for (const rule of context.rules) {
+      const text = rule.summary || (rule.fullText?.substring(0, 300) + '...');
+      sections.push(`- **[${rule.topic}]** ${text}`);
+    }
+  }
+
+  // RECENT MESSAGES section
+  if (context.messages?.length > 0) {
+    sections.push(`\n## RECENT COMMUNICATIONS\n`);
+    // Group by conversation
+    const grouped: Record<string, any[]> = {};
+    for (const m of context.messages) {
+      if (!grouped[m.conversationId]) grouped[m.conversationId] = [];
+      grouped[m.conversationId].push(m);
+    }
+    
+    for (const [convId, msgs] of Object.entries(grouped)) {
+      const conv = context.conversations?.find((c: any) => c.id === convId);
+      sections.push(`### ${conv?.title || 'Conversation'} (${conv?.sourceType || 'Unknown source'})`);
+      for (const msg of (msgs as any[]).slice(-15)) {
+        const sender = context.people?.find((p: any) => p.id === msg.senderId);
+        const truncatedText = msg.rawText?.length > 250 
+          ? msg.rawText.substring(0, 250) + '...' 
+          : msg.rawText;
+        sections.push(`[${msg.sentAt}] ${sender?.fullName || 'Unknown'}: "${truncatedText}"`);
+      }
+    }
+  }
+
+  // CONVERSATION ANALYSES section
+  if (context.conversationAnalyses?.length > 0) {
+    sections.push(`\n## PRIOR CONVERSATION ANALYSES\n`);
+    for (const analysis of context.conversationAnalyses) {
+      const summary = analysis.summary?.substring(0, 200) || 'No summary';
+      sections.push(`- **Tone: ${analysis.overallTone}** - ${summary}`);
+    }
+  }
+
+  return sections.join('\n\n');
+}
 
 serve(async (req) => {
   // Handle CORS preflight
@@ -72,7 +195,7 @@ serve(async (req) => {
       );
     }
 
-    const { operation, messages, fileData, personData, model } = await req.json();
+    const { operation, messages, fileData, personData, model, peopleList, context } = await req.json();
     const selectedModel = model || DEFAULT_MODEL;
 
     console.log(`Processing operation: ${operation}, model: ${selectedModel}`);
@@ -83,8 +206,22 @@ serve(async (req) => {
 
     switch (operation) {
       case 'chat':
-        systemPrompt = SYSTEM_PROMPTS.chat;
+        // Use context-aware prompt if context is provided
+        if (context && Object.keys(context).length > 0) {
+          systemPrompt = buildContextualSystemPrompt(context);
+        } else {
+          systemPrompt = SYSTEM_PROMPTS.chat;
+        }
         stream = true;
+        break;
+
+      case 'extract-entities':
+        systemPrompt = SYSTEM_PROMPTS.extractEntities;
+        userContent = JSON.stringify({
+          userMessage: messages[messages.length - 1]?.content || '',
+          availablePeople: peopleList || []
+        });
+        stream = false; // Must be non-streaming for JSON parsing
         break;
 
       case 'parse-file':
@@ -164,7 +301,7 @@ serve(async (req) => {
       requestBody.stream = true;
     }
 
-    console.log(`Calling OpenRouter with ${apiMessages.length} messages`);
+    console.log(`Calling OpenRouter with ${apiMessages.length} messages, estimated ${totalTokens} tokens`);
 
     const response = await fetch(OPENROUTER_URL, {
       method: 'POST',
