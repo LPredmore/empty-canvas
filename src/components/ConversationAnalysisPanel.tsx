@@ -21,7 +21,9 @@ import {
   Users,
   Loader2,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Plus,
+  X
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -33,6 +35,7 @@ interface ConversationAnalysisPanelProps {
   issues: Issue[];
   onRefreshAnalysis?: () => Promise<void>;
   isRefreshing?: boolean;
+  onIssueLinked?: () => void;
 }
 
 const TONE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -49,12 +52,19 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
   linkedIssues,
   issues,
   onRefreshAnalysis,
-  isRefreshing = false
+  isRefreshing = false,
+  onIssueLinked
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [topicCategories, setTopicCategories] = useState<TopicCategory[]>([]);
   const [relatedConversations, setRelatedConversations] = useState<RelatedConversationDiscovery[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(false);
+  
+  // Link to issue state
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [selectedIssueId, setSelectedIssueId] = useState<string>('');
+  const [linkReason, setLinkReason] = useState('');
+  const [isLinking, setIsLinking] = useState(false);
 
   useEffect(() => {
     api.getTopicCategories().then(setTopicCategories);
@@ -77,11 +87,33 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
   const linkedIssueDetails = linkedIssues
     .map(link => issues.find(i => i.id === link.issueId))
     .filter(Boolean) as Issue[];
+  
+  // Get issues that are NOT already linked
+  const unlinkedIssues = issues.filter(
+    issue => !linkedIssues.some(link => link.issueId === issue.id)
+  );
 
   const isStale = analysis && conversation.updatedAt && 
     new Date(analysis.createdAt) < new Date(conversation.updatedAt);
 
   const toneStyle = analysis ? TONE_COLORS[analysis.overallTone] || TONE_COLORS.neutral : TONE_COLORS.neutral;
+
+  const handleLinkIssue = async () => {
+    if (!selectedIssueId || !linkReason.trim()) return;
+    
+    setIsLinking(true);
+    try {
+      await api.linkConversationToIssue(conversationId, selectedIssueId, linkReason.trim());
+      setShowLinkModal(false);
+      setSelectedIssueId('');
+      setLinkReason('');
+      onIssueLinked?.();
+    } catch (error) {
+      console.error('Failed to link issue:', error);
+    } finally {
+      setIsLinking(false);
+    }
+  };
 
   // No analysis available state
   if (!analysis) {
@@ -113,6 +145,7 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
   }
 
   return (
+    <>
     <div className="bg-card border border-border rounded-lg mb-4 overflow-hidden">
       {/* Header */}
       <button
@@ -188,30 +221,50 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
           )}
 
           {/* Linked Issues */}
-          {linkedIssueDetails.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" />
                 Linked Issues ({linkedIssueDetails.length})
               </h4>
-              <div className="space-y-1">
-                {linkedIssueDetails.map(issue => (
-                  <Link
-                    key={issue.id}
-                    to={`/issues/${issue.id}`}
-                    className="flex items-center gap-2 text-sm text-foreground hover:text-primary transition-colors"
-                  >
-                    <span className={`w-2 h-2 rounded-full ${
-                      issue.priority === 'high' ? 'bg-red-500' :
-                      issue.priority === 'medium' ? 'bg-amber-500' : 'bg-slate-400'
-                    }`} />
-                    {issue.title}
-                    <span className="text-xs text-muted-foreground">({issue.status})</span>
-                  </Link>
-                ))}
-              </div>
+              {unlinkedIssues.length > 0 && (
+                <button
+                  onClick={() => setShowLinkModal(true)}
+                  className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium"
+                >
+                  <Plus className="w-3 h-3" />
+                  Link Issue
+                </button>
+              )}
             </div>
-          )}
+            {linkedIssueDetails.length > 0 ? (
+              <div className="space-y-1">
+                {linkedIssueDetails.map(issue => {
+                  const linkData = linkedIssues.find(l => l.issueId === issue.id);
+                  return (
+                    <div key={issue.id} className="space-y-0.5">
+                      <Link
+                        to={`/issues/${issue.id}`}
+                        className="flex items-center gap-2 text-sm text-foreground hover:text-primary transition-colors"
+                      >
+                        <span className={`w-2 h-2 rounded-full ${
+                          issue.priority === 'high' ? 'bg-red-500' :
+                          issue.priority === 'medium' ? 'bg-amber-500' : 'bg-slate-400'
+                        }`} />
+                        {issue.title}
+                        <span className="text-xs text-muted-foreground">({issue.status})</span>
+                      </Link>
+                      {linkData?.reason && (
+                        <p className="text-xs text-muted-foreground ml-4 italic">{linkData.reason}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No issues linked to this conversation.</p>
+            )}
+          </div>
 
           {/* Agreement Violations */}
           {analysis.agreementViolations.length > 0 && (
@@ -301,5 +354,74 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
         </div>
       )}
     </div>
+
+      {/* Link to Issue Modal */}
+      {showLinkModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="font-semibold text-foreground">Link to Issue</h3>
+              <button
+                onClick={() => setShowLinkModal(false)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Select Issue
+                </label>
+                <select
+                  value={selectedIssueId}
+                  onChange={(e) => setSelectedIssueId(e.target.value)}
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
+                >
+                  <option value="">Choose an issue...</option>
+                  {unlinkedIssues.map(issue => (
+                    <option key={issue.id} value={issue.id}>
+                      {issue.title} ({issue.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Link Reason <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={linkReason}
+                  onChange={(e) => setLinkReason(e.target.value)}
+                  placeholder="Describe why this conversation is related to the issue..."
+                  rows={4}
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-border">
+              <button
+                onClick={() => setShowLinkModal(false)}
+                className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLinkIssue}
+                disabled={!selectedIssueId || !linkReason.trim() || isLinking}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {isLinking ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <LinkIcon className="w-4 h-4" />
+                )}
+                Link Issue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

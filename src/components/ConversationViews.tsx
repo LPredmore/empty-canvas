@@ -435,6 +435,10 @@ export const ConversationDetail: React.FC = () => {
             issues={issues}
             onRefreshAnalysis={handleRefreshAnalysis}
             isRefreshing={refreshingAnalysis}
+            onIssueLinked={async () => {
+              const links = await api.getConversationIssueLinks(id!);
+              setLinkedIssues(links);
+            }}
           />
         </div>
 
