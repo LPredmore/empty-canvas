@@ -15,6 +15,7 @@ import {
   convertPDFPagesToImages, 
   PDFExtractionResult 
 } from '../utils/pdfExtractor';
+import { isPdfWorkerReady, getPdfWorkerDiagnostics } from '../utils/pdfjsInit';
 import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
 
 // Re-export the parser types for external use
@@ -363,9 +364,28 @@ export async function parseLegalDocument(file: File): Promise<DocumentExtraction
 
   // Handle different file types
   if (mimeType === 'application/pdf') {
+    // Verify PDF worker is ready before attempting extraction
+    if (!isPdfWorkerReady()) {
+      const diagnostics = getPdfWorkerDiagnostics();
+      console.error('PDF worker not initialized:', diagnostics);
+      throw new Error(
+        'PDF processing engine failed to start. Please refresh the page and try again. ' +
+        `(Worker diagnostics: ${JSON.stringify(diagnostics)})`
+      );
+    }
+    
     // Extract text from PDF using PDF.js
     console.log('Extracting text from PDF...');
-    pdfInfo = await extractTextFromPDF(file);
+    try {
+      pdfInfo = await extractTextFromPDF(file);
+    } catch (pdfError) {
+      const diagnostics = getPdfWorkerDiagnostics();
+      console.error('PDF extraction failed:', pdfError, diagnostics);
+      throw new Error(
+        `Failed to read PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}. ` +
+        'The file may be encrypted, corrupted, or in an unsupported format.'
+      );
+    }
     
     console.log(`PDF extraction complete: ${pdfInfo.extractedPages}/${pdfInfo.totalPages} pages, ` +
       `${pdfInfo.estimatedTokens} estimated tokens, scanned: ${pdfInfo.isLikelyScanned}`);

@@ -1,8 +1,6 @@
+// Import the centralized PDF.js initialization first - this sets up workerPort
+import './pdfjsInit';
 import * as pdfjsLib from 'pdfjs-dist';
-import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-
-// Set the worker source for PDF.js using Vite's bundled asset
-pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
 export interface PageText {
   pageNumber: number;
