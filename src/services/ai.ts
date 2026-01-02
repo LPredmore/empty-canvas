@@ -608,6 +608,24 @@ async function handleFileImportInChat(
     if (!analysisError && analysisResult) {
       await processAnalysisResultsFromChat(conversation.id, analysisResult, existingPeople);
       
+      // Persist conversation state (resolution status)
+      if (analysisResult.conversationState) {
+        const { status, pendingResponderName } = analysisResult.conversationState;
+        
+        // Resolve name to ID
+        let pendingResponderId: string | null = null;
+        if (pendingResponderName) {
+          const match = existingPeople.find(p => 
+            p.fullName.toLowerCase() === pendingResponderName.toLowerCase() ||
+            p.fullName.toLowerCase().includes(pendingResponderName.toLowerCase()) ||
+            pendingResponderName.toLowerCase().includes(p.fullName.toLowerCase())
+          );
+          pendingResponderId = match?.id || null;
+        }
+        
+        await api.updateConversationStatus(conversation.id, status, pendingResponderId);
+      }
+      
       const created = analysisResult.issueActions?.filter((a: any) => a.action === 'create').length || 0;
       const updated = analysisResult.issueActions?.filter((a: any) => a.action === 'update').length || 0;
       const violations = analysisResult.agreementViolations?.length || 0;

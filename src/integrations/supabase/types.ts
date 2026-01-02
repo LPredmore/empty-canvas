@@ -360,9 +360,11 @@ export type Database = {
         Row: {
           ended_at: string | null
           id: string
+          pending_responder_id: string | null
           preview_text: string | null
           source_type: string
           started_at: string | null
+          status: string
           title: string
           updated_at: string | null
           user_id: string | null
@@ -370,9 +372,11 @@ export type Database = {
         Insert: {
           ended_at?: string | null
           id?: string
+          pending_responder_id?: string | null
           preview_text?: string | null
           source_type: string
           started_at?: string | null
+          status?: string
           title: string
           updated_at?: string | null
           user_id?: string | null
@@ -380,9 +384,11 @@ export type Database = {
         Update: {
           ended_at?: string | null
           id?: string
+          pending_responder_id?: string | null
           preview_text?: string | null
           source_type?: string
           started_at?: string | null
+          status?: string
           title?: string
           updated_at?: string | null
           user_id?: string | null

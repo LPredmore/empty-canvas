@@ -177,6 +177,25 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
       // Process the analysis results (issues, profile notes, etc.)
       await processAnalysisResults(conversationId, analysisResult, savedMessages);
 
+      // Persist conversation state (resolution status)
+      if (analysisResult.conversationState) {
+        const { status, pendingResponderName } = analysisResult.conversationState;
+        
+        // Resolve name to ID using participant mapping
+        let pendingResponderId: string | null = null;
+        if (pendingResponderName) {
+          const participants = await api.getPeople();
+          const match = participants.find(p => 
+            p.fullName.toLowerCase() === pendingResponderName.toLowerCase() ||
+            p.fullName.toLowerCase().includes(pendingResponderName.toLowerCase()) ||
+            pendingResponderName.toLowerCase().includes(p.fullName.toLowerCase())
+          );
+          pendingResponderId = match?.id || null;
+        }
+        
+        await api.updateConversationStatus(conversationId, status, pendingResponderId);
+      }
+
       // Store detected agreements for review
       const detectedAgreementsFromAnalysis = analysisResult.detectedAgreements || [];
       if (detectedAgreementsFromAnalysis.length > 0) {

@@ -1,11 +1,19 @@
 // Types for conversation analysis results
 
+export interface ConversationStateResult {
+  status: 'open' | 'resolved';
+  pendingResponderName: string | null;
+  reasoning: string;
+  pendingActionSummary?: string;
+}
+
 export interface ConversationAnalysisResult {
   conversationAnalysis: {
     summary: string;
     overallTone: 'cooperative' | 'neutral' | 'contentious' | 'hostile';
     keyTopics: string[];
   };
+  conversationState?: ConversationStateResult;
   issueActions: IssueAction[];
   agreementViolations: AgreementViolation[];
   personAnalyses: PersonAnalysisResult[];
