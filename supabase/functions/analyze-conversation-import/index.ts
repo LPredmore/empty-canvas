@@ -404,10 +404,11 @@ serve(async (req) => {
       agreementItems,
       existingIssues,
       mePersonId,
-      isReanalysis = false
+      isReanalysis = false,
+      userGuidance
     } = await req.json();
 
-    console.log(`Analyzing conversation ${conversationId} with ${messages?.length || 0} messages (reanalysis: ${isReanalysis})`);
+    console.log(`Analyzing conversation ${conversationId} with ${messages?.length || 0} messages (reanalysis: ${isReanalysis}, hasGuidance: ${!!userGuidance})`);
 
     if (!messages || messages.length === 0) {
       return new Response(
@@ -423,7 +424,8 @@ serve(async (req) => {
       participants,
       agreementItems,
       existingIssues,
-      mePersonId
+      mePersonId,
+      userGuidance
     });
 
     console.log('Calling OpenRouter for conversation analysis...');
@@ -534,8 +536,9 @@ function buildAnalysisPrompt(data: {
   agreementItems: any[];
   existingIssues: any[];
   mePersonId: string;
+  userGuidance?: string;
 }): string {
-  const { conversationId, messages, participants, agreementItems, existingIssues, mePersonId } = data;
+  const { conversationId, messages, participants, agreementItems, existingIssues, mePersonId, userGuidance } = data;
 
   // Build ID reference table (for JSON personId fields only)
   const idReference = participants.map(p => 
@@ -572,6 +575,32 @@ ${m.rawText}`;
     ).join('\n\n');
   }
 
+  // Build user guidance section if provided
+  let guidanceSection = '';
+  if (userGuidance && userGuidance.trim()) {
+    guidanceSection = `
+### USER-FLAGGED AREAS FOR INVESTIGATION
+
+The user has identified the following areas requiring deeper analysis:
+
+---
+${userGuidance.trim()}
+---
+
+**INVESTIGATION REQUIREMENTS:**
+1. For EACH concern raised, provide thorough investigation in your analysis
+2. Cite specific message evidence that supports OR contradicts the concern
+3. If a concern is NOT supported by evidence, explicitly state: "User concern about [X] was investigated but not supported by the evidence because [reason]"
+4. Do NOT simply accept the user's framing — evaluate objectively against the documented messages
+5. Increase depth and specificity in the flagged areas
+6. The user's concerns may reveal patterns you missed on first pass — investigate thoroughly
+7. Address each user concern in the summary or relevant analysis section
+
+Your analysis must address these areas with increased scrutiny while maintaining the same objective, evidence-based standards.
+
+`;
+  }
+
   return `## CONVERSATION TO ANALYZE
 
 **Conversation ID:** ${conversationId}
@@ -590,7 +619,7 @@ ${agreementContext}
 
 ### Existing Issues:
 ${issueContext}
-
+${guidanceSection}
 ---
 
 Please analyze this conversation following the 9-step workflow and produce the required JSON response.
