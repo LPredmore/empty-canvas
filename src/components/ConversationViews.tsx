@@ -5,7 +5,7 @@ import { processAnalysisResults, updateConversationState, buildAnalysisSummary }
 import { ConversationAnalysisResult } from '../types/analysisTypes';
 import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus, ConversationAnalysis } from '../types';
 import { format, isSameDay, isSameMonth, isSameYear, differenceInDays } from 'date-fns';
-import { Search, Filter, Paperclip, Send, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User, RefreshCw } from 'lucide-react';
+import { Search, Filter, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User } from 'lucide-react';
 import { ConversationAnalysisPanel } from './ConversationAnalysisPanel';
 
 const formatDateRange = (startedAt?: string, endedAt?: string): string => {
@@ -237,7 +237,7 @@ export const ConversationDetail: React.FC = () => {
     }
   };
 
-  const handleRefreshAnalysis = async () => {
+  const handleRefreshAnalysis = async (userGuidance?: string) => {
     if (!conversation || !id) return;
     setRefreshingAnalysis(true);
     
@@ -281,7 +281,8 @@ export const ConversationDetail: React.FC = () => {
             priority: i.priority
           })),
           mePersonId: mePerson?.id,
-          isReanalysis: true
+          isReanalysis: true,
+          userGuidance: userGuidance || undefined
         }
       });
       
@@ -297,7 +298,7 @@ export const ConversationDetail: React.FC = () => {
           receiverId: m.receiverId,
           rawText: m.rawText || '',
           sentAt: m.sentAt || ''
-        })));
+        })), userGuidance);
         
         // Update conversation state (resolution status)
         if (analysisResult.conversationState) {
@@ -508,22 +509,6 @@ export const ConversationDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* Input Area (Mock) */}
-      <div className="p-4 border-t border-slate-200 bg-white">
-        <div className="flex items-center gap-2">
-          <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-colors">
-            <Paperclip className="w-5 h-5" />
-          </button>
-          <input 
-            type="text" 
-            placeholder="Draft a new message or note..." 
-            className="flex-1 border border-slate-300 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-          />
-          <button className="p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
-            <Send className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
 
       {/* Tagging Popover/Modal */}
       {taggingMsgId && (

@@ -277,6 +277,7 @@ export type Database = {
           overall_tone: string
           summary: string
           topic_category_slugs: Json | null
+          user_guidance: string | null
           user_id: string | null
         }
         Insert: {
@@ -289,6 +290,7 @@ export type Database = {
           overall_tone: string
           summary: string
           topic_category_slugs?: Json | null
+          user_guidance?: string | null
           user_id?: string | null
         }
         Update: {
@@ -301,6 +303,7 @@ export type Database = {
           overall_tone?: string
           summary?: string
           topic_category_slugs?: Json | null
+          user_guidance?: string | null
           user_id?: string | null
         }
         Relationships: []

@@ -23,7 +23,8 @@ import {
   AlertCircle,
   Sparkles,
   Plus,
-  X
+  X,
+  Search
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -33,7 +34,7 @@ interface ConversationAnalysisPanelProps {
   analysis: ConversationAnalysis | null;
   linkedIssues: Array<{ issueId: string; reason?: string }>;
   issues: Issue[];
-  onRefreshAnalysis?: () => Promise<void>;
+  onRefreshAnalysis?: (userGuidance?: string) => Promise<void>;
   isRefreshing?: boolean;
   onIssueLinked?: () => void;
 }
@@ -65,6 +66,10 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
   const [selectedIssueId, setSelectedIssueId] = useState<string>('');
   const [linkReason, setLinkReason] = useState('');
   const [isLinking, setIsLinking] = useState(false);
+  
+  // Guided analysis state
+  const [showGuidanceForm, setShowGuidanceForm] = useState(false);
+  const [guidanceInput, setGuidanceInput] = useState('');
 
   useEffect(() => {
     api.getTopicCategories().then(setTopicCategories);
@@ -332,23 +337,95 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
           )}
 
           {/* Actions */}
-          <div className="flex items-center justify-between pt-2 border-t border-border">
-            <span className="text-xs text-muted-foreground">
-              Analyzed {format(new Date(analysis.createdAt), 'MMM d, yyyy h:mm a')}
-            </span>
-            {onRefreshAnalysis && (
-              <button
-                onClick={onRefreshAnalysis}
-                disabled={isRefreshing}
-                className="flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium disabled:opacity-50"
-              >
-                {isRefreshing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4" />
-                )}
-                Refresh Analysis
-              </button>
+          <div className="pt-2 border-t border-border space-y-3">
+            {/* Display guidance used (if any) */}
+            {analysis.userGuidance && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <h5 className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1 flex items-center gap-1">
+                  <Search className="w-3 h-3" />
+                  Analysis investigated these concerns:
+                </h5>
+                <p className="text-sm text-blue-800 whitespace-pre-wrap">{analysis.userGuidance}</p>
+              </div>
+            )}
+            
+            {/* Guidance input form */}
+            {showGuidanceForm ? (
+              <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                    What should the AI investigate more thoroughly?
+                  </label>
+                  <textarea
+                    value={guidanceInput}
+                    onChange={(e) => setGuidanceInput(e.target.value)}
+                    placeholder="e.g., I'm concerned about the pattern of deflection when I bring up the therapist's recommendations. Also, check if the electronics comment relates to the ongoing electronics issue..."
+                    rows={4}
+                    className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground text-sm focus:ring-2 focus:ring-primary focus:border-primary resize-none"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    The AI will investigate these areas but may conclude they are not supported by evidence.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => {
+                      setShowGuidanceForm(false);
+                      setGuidanceInput('');
+                    }}
+                    className="text-sm text-muted-foreground hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      onRefreshAnalysis?.(guidanceInput.trim() || undefined);
+                      setShowGuidanceForm(false);
+                      setGuidanceInput('');
+                    }}
+                    disabled={isRefreshing || !guidanceInput.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {isRefreshing ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Search className="w-4 h-4" />
+                    )}
+                    Analyze with Guidance
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  Analyzed {format(new Date(analysis.createdAt), 'MMM d, yyyy h:mm a')}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowGuidanceForm(true)}
+                    disabled={isRefreshing}
+                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground font-medium disabled:opacity-50"
+                  >
+                    <Search className="w-4 h-4" />
+                    Request Deeper Analysis
+                  </button>
+                  {onRefreshAnalysis && (
+                    <button
+                      onClick={() => onRefreshAnalysis()}
+                      disabled={isRefreshing}
+                      className="flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium disabled:opacity-50"
+                    >
+                      {isRefreshing ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4" />
+                      )}
+                      Standard Refresh
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>
