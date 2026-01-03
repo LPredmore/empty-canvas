@@ -94,10 +94,32 @@ Assess interaction quality overall and per participant using observable behavior
 
 For each participant, document both strengths and concerns when evidenced.
 
-### Step 4 — Issue Detection with Person Attribution
-Identify issues that should be tracked. For each issue determine NEW vs UPDATE.
+### Step 4 — Existing Issue Relevance Assessment (MANDATORY)
 
-For each issue:
+Before detecting new issues, you MUST evaluate EACH existing issue in the "Existing Issues" section for relevance to this conversation.
+
+For EACH existing issue, determine:
+1. Does this conversation contain content relevant to this issue? (Yes/No)
+2. If Yes, what is the connection? (brief explanation)
+
+A conversation is relevant to an issue if it:
+- Discusses the same topic, even tangentially
+- Provides new evidence or context for the issue
+- Shows behavior patterns related to the issue
+- References decisions, agreements, or disputes connected to the issue
+- Mentions keywords, people, or situations that overlap with the issue
+
+**CRITICAL:** A single conversation often relates to MULTIPLE issues (typically 2-5). Do not stop after finding one match. Evaluate EVERY existing issue independently.
+
+For each relevant existing issue, include an "update" action in issueActions that:
+- Links the conversation to the issue via linkedMessageIds
+- Provides reasoning explaining the connection
+- Updates person contributions if the conversation reveals new role information
+
+### Step 5 — New Issue Detection with Person Attribution
+After evaluating all existing issues, identify any NEW issues that should be tracked.
+
+For each NEW issue:
 - clear title
 - description grounded in the conversation map + claims ledger
 - why it matters (impact on resolution, cooperation, dependents/children if applicable)
@@ -119,7 +141,9 @@ For each contribution include:
 
 **Attribution rule:** If you cannot support a person's role with evidence, mark the role's description as Ambiguous and state what would clarify.
 
-### Step 5 — Agreement Violation Checks (When Agreements Are Provided)
+**MULTI-LINKING REQUIREMENT:** Most conversations relate to 2-5 existing issues. If you only link to 1 issue or create only new issues without linking to existing ones, verify you have genuinely evaluated every existing issue. Err on the side of linking: if there's a plausible connection, include an update action with reasoning.
+
+### Step 6 — Agreement Violation Checks (When Agreements Are Provided)
 For each agreement item, determine whether messages conflict with it:
 - **direct**: clear violation of terms
 - **potential**: may violate, missing details
@@ -127,7 +151,7 @@ For each agreement item, determine whether messages conflict with it:
 
 Cite evidence and explain the mapping.
 
-### Step 6 — New Agreement Detection
+### Step 7 — New Agreement Detection
 Identify when participants reach MUTUAL AGREEMENT on operational matters.
 
 Only mark as an agreement when there is clear mutual consent (explicit acceptance/confirmation). Proposals or unanswered requests are NOT agreements.
@@ -139,7 +163,7 @@ Include:
 - what it modifies/overrides (if applicable)
 - confidence level and why
 
-### Step 7 — Conversation State Detection
+### Step 8 — Conversation State Detection
 Analyze final 1–3 substantive messages and determine:
 - status: open | resolved
 - pending question/request/action (if any)
@@ -147,7 +171,7 @@ Analyze final 1–3 substantive messages and determine:
 
 If unclear, state ambiguity and what would close it.
 
-### Step 8 — Message Annotations (Flags) with Strict Attribution
+### Step 9 — Message Annotations (Flags) with Strict Attribution
 Flag specific messages that contain noteworthy or problematic behavior.
 
 Every flag MUST include attributedToPersonId and evidence.
@@ -540,12 +564,12 @@ ${m.rawText}`;
     ).join('\n');
   }
 
-  // Build existing issues context
+  // Build existing issues context with descriptions for thorough linking
   let issueContext = 'No existing issues tracked.';
   if (existingIssues && existingIssues.length > 0) {
     issueContext = existingIssues.map(i =>
-      `- [${i.id}] ${i.title} (${i.status}, ${i.priority} priority)`
-    ).join('\n');
+      `- [${i.id}] ${i.title} (${i.status}, ${i.priority} priority)\n  Description: ${i.description || 'No description provided'}`
+    ).join('\n\n');
   }
 
   return `## CONVERSATION TO ANALYZE
@@ -569,7 +593,7 @@ ${issueContext}
 
 ---
 
-Please analyze this conversation following the 8-step workflow and produce the required JSON response.
+Please analyze this conversation following the 9-step workflow and produce the required JSON response.
 
 CRITICAL FORMATTING RULE: In ALL prose/text fields (summary, description, evidence, claimText, findingDescription, etc.), use participant NAMES ONLY. UUIDs must ONLY appear in personId-type JSON fields (speakerPersonId, attributedToPersonId, personId, involvedPersonIds, etc.).
 
@@ -579,5 +603,6 @@ Remember:
 3. Attribute all issues and flags to specific individuals with evidence
 4. Include alternative interpretations for Tier 1-2 findings
 5. Note any missing context that could change conclusions
-6. Ensure the summary includes specific behavioral findings with attribution (using names, not IDs)`;
+6. Ensure the summary includes specific behavioral findings with attribution (using names, not IDs)
+7. **CRITICAL: For EVERY existing issue listed above, evaluate whether this conversation is relevant and include an "update" action if there is ANY plausible connection**`;
 }
