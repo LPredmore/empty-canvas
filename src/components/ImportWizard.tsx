@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { parseFileWithAI } from '../services/ai';
 import { processAnalysisResults, updateConversationState, extractKeyFindings, buildAnalysisSummary } from '../services/analysisProcessor';
-import { Person, SourceType, MessageDirection, Role, AgreementItem, Issue } from '../types';
+import { Person, SourceType, MessageDirection, Role } from '../types';
 import { ConversationAnalysisResult, AnalysisSummary, DetectedAgreement } from '../types/analysisTypes';
+import { FirstSentenceMatch } from '../types/continuity';
 import { parseOFWExport, parseGenericText, parseGmailExport, ParsedConversation } from '../utils/parsers';
-import { generateMessageHash } from '../utils/messageHash';
+import { extractFirstSentence } from '../utils/textMatching';
 import { supabase } from '../lib/supabase';
 import { DetectedAgreementsReview } from './DetectedAgreementsReview';
-import { ContinuityModal, ConversationMatch } from './ContinuityModal';
+import { ContinuityModal } from './ContinuityModal';
 import { 
   X, Upload, Calendar, Users, ArrowRight, Save, Loader2, CheckCircle2, 
   FileText, Trash2, FileType, AlertTriangle, Brain, Shield, TrendingUp, Handshake
@@ -49,9 +50,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   const [agreementsSavedCount, setAgreementsSavedCount] = useState(0);
   
   // Continuity Detection State
-  const [matchedConversations, setMatchedConversations] = useState<ConversationMatch[]>([]);
+  const [firstSentenceMatch, setFirstSentenceMatch] = useState<FirstSentenceMatch | null>(null);
   const [showContinuityModal, setShowContinuityModal] = useState(false);
-  const [messageHashes, setMessageHashes] = useState<string[]>([]);
   const [appendLoading, setAppendLoading] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,8 +65,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   const handleParse = async () => {
     setLoading(true);
     setParsedData(null);
-    setMatchedConversations([]);
-    setMessageHashes([]);
+    setFirstSentenceMatch(null);
 
     try {
         let result: ParsedConversation;
@@ -100,45 +99,45 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         });
         setNameMapping(newMapping);
         
-        // Generate message hashes for deduplication
-        const hashes = result.messages.map(msg => {
-            const senderPerson = existingPeople.find(p => 
-              p.fullName.toLowerCase() === msg.senderName.toLowerCase() ||
-              p.fullName.toLowerCase().includes(msg.senderName.toLowerCase())
-            );
-            return generateMessageHash(
-              senderPerson?.id || msg.senderName,
-              msg.sentAt,
-              msg.body
-            );
-        });
-        setMessageHashes(hashes);
-        
-        // Check for matching conversations (only if we have resolved participant IDs)
-        const resolvedParticipantIds = Object.entries(newMapping)
-          .filter(([_, id]) => id !== 'new' && id !== 'ignore')
-          .map(([_, id]) => id);
-        
-        if (resolvedParticipantIds.length > 0 && result.messages.length > 0) {
+        // First-sentence continuity detection
+        if (result.messages.length > 0) {
           const sortedMessages = [...result.messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
-          const dateRange = {
-            start: sortedMessages[0].sentAt,
-            end: sortedMessages[sortedMessages.length - 1].sentAt
-          };
+          const firstMessage = sortedMessages[0];
+          const firstSentence = extractFirstSentence(firstMessage.body);
           
-          const matches = await api.findMatchingConversations(
-            resolvedParticipantIds,
-            dateRange,
-            hashes
-          );
-          
-          // Only show continuity modal if there are high-confidence matches (with duplicate messages)
-          const highConfidenceMatches = matches.filter(m => m.overlapType === 'has_duplicate_messages');
-          if (highConfidenceMatches.length > 0) {
-            setMatchedConversations(highConfidenceMatches);
-            setShowContinuityModal(true);
-            setLoading(false);
-            return; // Don't proceed to step 2 yet
+          if (firstSentence) {
+            const match = await api.findConversationByFirstSentence(firstSentence);
+            
+            if (match) {
+              // Get the last message of that conversation for splice point
+              const lastMsg = await api.getLastMessageOfConversation(match.conversation.id);
+              
+              if (lastMsg) {
+                // Calculate how many new messages we'll add
+                const lastMsgSentence = extractFirstSentence(lastMsg.rawText);
+                let spliceIndex = -1;
+                for (let i = 0; i < sortedMessages.length; i++) {
+                  const msgText = sortedMessages[i].body.toLowerCase().replace(/\s+/g, ' ').trim();
+                  if (msgText.startsWith(lastMsgSentence)) {
+                    spliceIndex = i;
+                    break;
+                  }
+                }
+                const newMessageCount = spliceIndex >= 0 
+                  ? sortedMessages.length - spliceIndex - 1 
+                  : sortedMessages.length;
+                
+                setFirstSentenceMatch({
+                  conversation: match.conversation,
+                  matchedSentence: firstSentence,
+                  existingMessageCount: match.existingMessageCount,
+                  lastMessage: lastMsg
+                });
+                setShowContinuityModal(true);
+                setLoading(false);
+                return; // Wait for user decision
+              }
+            }
           }
         }
         
@@ -164,11 +163,12 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     }
   };
 
-  // Handle appending to existing conversation
-  const handleAppendToConversation = async (targetConversationId: string) => {
-    if (!parsedData) return;
+  // Handle appending to existing conversation using first-sentence splice
+  const handleAppendToConversation = async () => {
+    if (!parsedData || !firstSentenceMatch) return;
     
     setAppendLoading(true);
+    const targetConversationId = firstSentenceMatch.conversation.id;
     
     try {
       // Resolve people first
@@ -185,38 +185,43 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         }
       }
       
-      // Prepare messages with hashes
-      const messagesToAppend = parsedData.messages.map((msg, idx) => {
-        const senderId = nameToIdMap[msg.senderName];
-        const receiverId = nameToIdMap[msg.receiverName];
-        const senderPerson = existingPeople.find(p => p.id === senderId);
-        const direction = senderPerson?.role === Role.Me ? MessageDirection.Outbound : MessageDirection.Inbound;
-        
-        return {
-          rawText: msg.body,
-          sentAt: msg.sentAt.toISOString(),
-          senderId,
-          receiverId: receiverId || undefined,
-          direction,
-          contentHash: messageHashes[idx]
-        };
-      }).filter(m => m.senderId);
+      // Prepare all messages
+      const allMessages = parsedData.messages
+        .sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime())
+        .map(msg => {
+          const senderId = nameToIdMap[msg.senderName];
+          const receiverId = nameToIdMap[msg.receiverName];
+          const senderPerson = existingPeople.find(p => p.id === senderId);
+          const direction = senderPerson?.role === Role.Me ? MessageDirection.Outbound : MessageDirection.Inbound;
+          
+          return {
+            rawText: msg.body,
+            sentAt: msg.sentAt.toISOString(),
+            senderId,
+            receiverId: receiverId || undefined,
+            direction
+          };
+        }).filter(m => m.senderId);
       
-      // Append with deduplication
-      const { addedCount, skippedCount } = await api.appendMessagesWithDeduplication(
+      // Get splice point from the last message of existing conversation
+      const splicePointSentence = extractFirstSentence(firstSentenceMatch.lastMessage.rawText);
+      
+      // Append using splice-point logic
+      const { addedCount, skippedCount } = await api.appendMessagesAfterSplicePoint(
         targetConversationId,
-        messagesToAppend
+        allMessages,
+        splicePointSentence
       );
       
-      console.log(`Appended ${addedCount} messages, skipped ${skippedCount} duplicates`);
+      console.log(`Appended ${addedCount} messages, skipped ${skippedCount} (before splice point)`);
       
       setShowContinuityModal(false);
       setSavedConversationId(targetConversationId);
       
       // Get all messages for re-analysis
       setAnalysisLoading(true);
-      const allMessages = await api.getMessages(targetConversationId);
-      const messagesForAnalysis = allMessages.map(m => ({
+      const allDbMessages = await api.getMessages(targetConversationId);
+      const messagesForAnalysis = allDbMessages.map(m => ({
         id: m.id,
         senderId: m.senderId,
         receiverId: m.receiverId,
@@ -267,7 +272,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   const handleCancelContinuity = () => {
     setShowContinuityModal(false);
     setParsedData(null);
-    setMessageHashes([]);
+    setFirstSentenceMatch(null);
   };
 
   const runConversationAnalysis = async (
@@ -392,8 +397,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
             }
         }
 
-        // 2. Prepare Messages with content hashes
-        const messagesToSave = parsedData.messages.map((msg, idx) => {
+        // 2. Prepare Messages (no content hash needed - using first-sentence matching)
+        const messagesToSave = parsedData.messages.map((msg) => {
             const senderId = nameToIdMap[msg.senderName];
             const receiverId = nameToIdMap[msg.receiverName];
             const senderPerson = existingPeople.find(p => p.id === senderId);
@@ -404,8 +409,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                 sentAt: msg.sentAt.toISOString(),
                 senderId: senderId,
                 receiverId: receiverId || undefined,
-                direction: direction,
-                contentHash: messageHashes[idx] || generateMessageHash(senderId, msg.sentAt, msg.body)
+                direction: direction
             };
         }).filter(m => m.senderId);
 
@@ -485,9 +489,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     setDetectedAgreements([]);
     setShowAgreementsReview(false);
     setAgreementsSavedCount(0);
-    setMatchedConversations([]);
+    setFirstSentenceMatch(null);
     setShowContinuityModal(false);
-    setMessageHashes([]);
   };
 
   const handleAgreementsComplete = (savedCount: number) => {
@@ -518,15 +521,27 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   if (!isOpen) return null;
 
   // Continuity detection modal
-  if (showContinuityModal && matchedConversations.length > 0 && parsedData) {
-    const primaryMatch = matchedConversations[0];
-    const newMessageCount = parsedData.messages.length - primaryMatch.duplicateCount;
+  if (showContinuityModal && firstSentenceMatch && parsedData) {
+    // Calculate new message count based on splice point
+    const sortedMessages = [...parsedData.messages].sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime());
+    const lastMsgSentence = extractFirstSentence(firstSentenceMatch.lastMessage.rawText);
+    let spliceIndex = -1;
+    for (let i = 0; i < sortedMessages.length; i++) {
+      const msgText = sortedMessages[i].body.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (msgText.startsWith(lastMsgSentence)) {
+        spliceIndex = i;
+        break;
+      }
+    }
+    const newMessageCount = spliceIndex >= 0 
+      ? sortedMessages.length - spliceIndex - 1 
+      : sortedMessages.length;
     const participantNames = Array.from(parsedData.participants);
     
     return (
       <ContinuityModal
         isOpen={true}
-        matches={matchedConversations}
+        match={firstSentenceMatch}
         newMessageCount={newMessageCount}
         participantNames={participantNames}
         onAppendToConversation={handleAppendToConversation}

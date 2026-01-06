@@ -1812,165 +1812,149 @@ export const api = {
     }
   },
 
-  // --- Conversation Continuity Detection ---
-  findMatchingConversations: async (
-    participantIds: string[],
-    dateRange: { start: Date; end: Date },
-    messageHashes: string[]
-  ): Promise<Array<{
+  // --- Conversation Continuity Detection (First-Sentence Matching) ---
+  
+  /**
+   * Find a conversation that contains a message starting with the given first sentence.
+   * Used to detect when an uploaded conversation continues an existing one.
+   */
+  findConversationByFirstSentence: async (
+    firstSentence: string
+  ): Promise<{
     conversation: Conversation;
-    overlapType: 'has_duplicate_messages' | 'date_overlap_only';
-    duplicateCount: number;
+    matchingMessageId: string;
     existingMessageCount: number;
-  }>> => {
-    if (participantIds.length === 0) return [];
+  } | null> => {
+    if (!firstSentence || firstSentence.length < 20) return null;
     
-    // Get all conversations with these participants
-    const { data: convs, error } = await supabase
+    // Search for messages where raw_text starts with this sentence (case-insensitive)
+    const searchPattern = firstSentence.replace(/[%_]/g, '\\$&') + '%';
+    
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select('id, conversation_id, raw_text')
+      .ilike('raw_text', searchPattern)
+      .limit(1);
+    
+    if (error || !messages || messages.length === 0) return null;
+    
+    const matchedMessage = messages[0];
+    
+    // Get the conversation details
+    const { data: conv, error: convError } = await supabase
       .from('conversations')
       .select('*, conversation_participants(person_id)')
-      .order('started_at', { ascending: false });
+      .eq('id', matchedMessage.conversation_id)
+      .single();
     
-    if (error || !convs) return [];
+    if (convError || !conv) return null;
     
-    const matches: Array<{
-      conversation: Conversation;
-      overlapType: 'has_duplicate_messages' | 'date_overlap_only';
-      duplicateCount: number;
-      existingMessageCount: number;
-    }> = [];
+    // Get message count for this conversation
+    const { count } = await supabase
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('conversation_id', conv.id);
     
-    for (const conv of convs) {
-      const convParticipants = conv.conversation_participants?.map((cp: any) => cp.person_id) || [];
-      
-      // Check if all participants match
-      const hasAllParticipants = participantIds.every(id => convParticipants.includes(id)) &&
-                                 convParticipants.every((id: string) => participantIds.includes(id));
-      
-      if (!hasAllParticipants) continue;
-      
-      // Get existing messages to check for duplicates
-      const { data: existingMsgs } = await supabase
-        .from('messages')
-        .select('content_hash')
-        .eq('conversation_id', conv.id);
-      
-      const existingHashes = new Set(
-        (existingMsgs || [])
-          .map((m: any) => m.content_hash)
-          .filter(Boolean)
-      );
-      
-      const duplicateCount = messageHashes.filter(h => existingHashes.has(h)).length;
-      
-      if (duplicateCount > 0) {
-        // High-confidence match: has duplicate messages
-        matches.push({
-          conversation: {
-            id: conv.id,
-            title: conv.title,
-            sourceType: conv.source_type,
-            startedAt: conv.started_at,
-            endedAt: conv.ended_at,
-            updatedAt: conv.updated_at,
-            previewText: conv.preview_text || '',
-            participantIds: convParticipants,
-            status: conv.status || ConversationStatus.Open,
-            pendingResponderId: conv.pending_responder_id
-          },
-          overlapType: 'has_duplicate_messages',
-          duplicateCount,
-          existingMessageCount: existingMsgs?.length || 0
-        });
-      } else {
-        // Check date overlap
-        const convStart = conv.started_at ? new Date(conv.started_at) : null;
-        const convEnd = conv.ended_at ? new Date(conv.ended_at) : new Date();
-        
-        if (convStart && dateRange.start <= convEnd && dateRange.end >= convStart) {
-          matches.push({
-            conversation: {
-              id: conv.id,
-              title: conv.title,
-              sourceType: conv.source_type,
-              startedAt: conv.started_at,
-              endedAt: conv.ended_at,
-              updatedAt: conv.updated_at,
-              previewText: conv.preview_text || '',
-              participantIds: convParticipants,
-              status: conv.status || ConversationStatus.Open,
-              pendingResponderId: conv.pending_responder_id
-            },
-            overlapType: 'date_overlap_only',
-            duplicateCount: 0,
-            existingMessageCount: existingMsgs?.length || 0
-          });
-        }
+    return {
+      conversation: {
+        id: conv.id,
+        title: conv.title,
+        sourceType: conv.source_type,
+        startedAt: conv.started_at,
+        endedAt: conv.ended_at,
+        updatedAt: conv.updated_at,
+        previewText: conv.preview_text || '',
+        participantIds: conv.conversation_participants?.map((cp: any) => cp.person_id) || [],
+        status: conv.status || ConversationStatus.Open,
+        pendingResponderId: conv.pending_responder_id
+      },
+      matchingMessageId: matchedMessage.id,
+      existingMessageCount: count || 0
+    };
+  },
+
+  /**
+   * Get the most recent message from a conversation.
+   */
+  getLastMessageOfConversation: async (
+    conversationId: string
+  ): Promise<{ id: string; rawText: string; sentAt: string } | null> => {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id, raw_text, sent_at')
+      .eq('conversation_id', conversationId)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (error || !data) return null;
+    
+    return {
+      id: data.id,
+      rawText: data.raw_text || '',
+      sentAt: data.sent_at || ''
+    };
+  },
+
+  /**
+   * Append messages to a conversation, skipping everything up to and including the splice point.
+   * The splice point is identified by the first sentence of the last existing message.
+   */
+  appendMessagesAfterSplicePoint: async (
+    conversationId: string,
+    allUploadedMessages: Array<{
+      rawText: string;
+      sentAt: string;
+      senderId?: string;
+      receiverId?: string;
+      direction: string;
+    }>,
+    splicePointSentence: string
+  ): Promise<{ addedCount: number; skippedCount: number }> => {
+    // Find where in the uploaded messages the splice point occurs
+    let spliceIndex = -1;
+    
+    for (let i = 0; i < allUploadedMessages.length; i++) {
+      const msgText = (allUploadedMessages[i].rawText || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (msgText.startsWith(splicePointSentence)) {
+        spliceIndex = i;
+        break;
       }
     }
     
-    // Sort: duplicates first, then by date
-    return matches.sort((a, b) => {
-      if (a.overlapType === 'has_duplicate_messages' && b.overlapType !== 'has_duplicate_messages') return -1;
-      if (b.overlapType === 'has_duplicate_messages' && a.overlapType !== 'has_duplicate_messages') return 1;
-      return b.duplicateCount - a.duplicateCount;
-    });
-  },
-
-  appendMessagesWithDeduplication: async (
-    conversationId: string,
-    messages: Array<{
-      senderId?: string;
-      receiverId?: string;
-      rawText: string;
-      direction: string;
-      sentAt: string;
-      contentHash: string;
-    }>
-  ): Promise<{ addedCount: number; skippedCount: number }> => {
-    // Get existing hashes
-    const { data: existingMsgs } = await supabase
-      .from('messages')
-      .select('content_hash')
-      .eq('conversation_id', conversationId);
+    // Take everything AFTER the splice point
+    const messagesToInsert = spliceIndex >= 0 
+      ? allUploadedMessages.slice(spliceIndex + 1)
+      : allUploadedMessages; // If no splice point found, insert all (fallback)
     
-    const existingHashes = new Set(
-      (existingMsgs || [])
-        .map((m: any) => m.content_hash)
-        .filter(Boolean)
-    );
+    const skippedCount = allUploadedMessages.length - messagesToInsert.length;
     
-    // Filter out duplicates
-    const newMessages = messages.filter(m => !existingHashes.has(m.contentHash));
-    const skippedCount = messages.length - newMessages.length;
-    
-    if (newMessages.length === 0) {
+    if (messagesToInsert.length === 0) {
       return { addedCount: 0, skippedCount };
     }
     
     // Insert new messages
-    const messagesPayload = newMessages.map(m => ({
+    const messagesPayload = messagesToInsert.map(m => ({
       conversation_id: conversationId,
       sender_id: m.senderId,
       receiver_id: m.receiverId,
       raw_text: m.rawText,
       direction: m.direction,
-      sent_at: m.sentAt,
-      content_hash: m.contentHash
+      sent_at: m.sentAt
     }));
     
     const { error } = await supabase.from('messages').insert(messagesPayload);
     if (error) throw error;
     
     // Update conversation metadata
-    const latestDate = newMessages.reduce((max, m) => {
+    const latestDate = messagesToInsert.reduce((max, m) => {
       const d = new Date(m.sentAt);
       return d > max ? d : max;
     }, new Date(0));
     
-    const latestMessage = newMessages[newMessages.length - 1];
+    const latestMessage = messagesToInsert[messagesToInsert.length - 1];
     
-    // Get current conversation to check dates
+    // Get current conversation to update
     const { data: conv } = await supabase
       .from('conversations')
       .select('ended_at, amendment_history')
@@ -1983,7 +1967,8 @@ export const api = {
     // Record amendment
     amendmentHistory.push({
       date: new Date().toISOString(),
-      messagesAdded: newMessages.length
+      messagesAdded: messagesToInsert.length,
+      method: 'first_sentence_splice'
     });
     
     await supabase.from('conversations').update({ 
@@ -1993,7 +1978,7 @@ export const api = {
       amendment_history: amendmentHistory
     }).eq('id', conversationId);
     
-    return { addedCount: newMessages.length, skippedCount };
+    return { addedCount: messagesToInsert.length, skippedCount };
   },
 
   // --- Conversation Resolution ---

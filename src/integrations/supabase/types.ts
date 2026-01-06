@@ -469,6 +469,21 @@ export type Database = {
           },
         ]
       }
+      ignore: {
+        Row: {
+          created_at: string
+          today: string | null
+        }
+        Insert: {
+          created_at?: string
+          today?: string | null
+        }
+        Update: {
+          created_at?: string
+          today?: string | null
+        }
+        Relationships: []
+      }
       issue_people: {
         Row: {
           contribution_description: string | null
