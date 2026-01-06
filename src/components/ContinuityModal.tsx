@@ -1,21 +1,14 @@
 import React from 'react';
-import { Conversation } from '../types';
-import { GitMerge, Plus, X, AlertTriangle, MessageSquare, Calendar, Users } from 'lucide-react';
+import { FirstSentenceMatch } from '../types/continuity';
+import { GitMerge, Plus, X, MessageSquare, Calendar, Users, Search } from 'lucide-react';
 import { format } from 'date-fns';
-
-export interface ConversationMatch {
-  conversation: Conversation;
-  overlapType: 'has_duplicate_messages' | 'date_overlap_only';
-  duplicateCount: number;
-  existingMessageCount: number;
-}
 
 interface ContinuityModalProps {
   isOpen: boolean;
-  matches: ConversationMatch[];
+  match: FirstSentenceMatch | null;
   newMessageCount: number;
   participantNames: string[];
-  onAppendToConversation: (conversationId: string) => void;
+  onAppendToConversation: () => void;
   onCreateSeparate: () => void;
   onCancel: () => void;
   loading?: boolean;
@@ -23,7 +16,7 @@ interface ContinuityModalProps {
 
 export const ContinuityModal: React.FC<ContinuityModalProps> = ({
   isOpen,
-  matches,
+  match,
   newMessageCount,
   participantNames,
   onAppendToConversation,
@@ -31,11 +24,12 @@ export const ContinuityModal: React.FC<ContinuityModalProps> = ({
   onCancel,
   loading = false
 }) => {
-  if (!isOpen || matches.length === 0) return null;
+  if (!isOpen || !match) return null;
 
-  // Only show the strongest match (the one with duplicates, or first if only date overlaps)
-  const primaryMatch = matches.find(m => m.overlapType === 'has_duplicate_messages') || matches[0];
-  const hasDuplicates = primaryMatch.overlapType === 'has_duplicate_messages';
+  // Truncate matched sentence for display
+  const displaySentence = match.matchedSentence.length > 80 
+    ? match.matchedSentence.substring(0, 80) + '...'
+    : match.matchedSentence;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -48,12 +42,10 @@ export const ContinuityModal: React.FC<ContinuityModalProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-800">
-                {hasDuplicates ? 'Possible Continuation Detected' : 'Related Conversation Found'}
+                Continuation Detected
               </h2>
               <p className="text-sm text-slate-600">
-                {hasDuplicates 
-                  ? 'Your upload appears to continue an existing conversation'
-                  : 'We found a conversation with overlapping dates'}
+                Your upload appears to continue an existing conversation
               </p>
             </div>
           </div>
@@ -61,21 +53,32 @@ export const ContinuityModal: React.FC<ContinuityModalProps> = ({
 
         {/* Content */}
         <div className="p-6 space-y-4">
+          {/* Matched sentence highlight */}
+          <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+            <h4 className="font-medium text-amber-800 mb-2 flex items-center gap-2 text-sm">
+              <Search className="w-4 h-4" />
+              Matched Text
+            </h4>
+            <p className="text-sm text-amber-900 italic">
+              "{displaySentence}"
+            </p>
+          </div>
+
           {/* Matched conversation info */}
           <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
             <h3 className="font-semibold text-slate-800 mb-2 flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-slate-500" />
-              {primaryMatch.conversation.title}
+              {match.conversation.title}
             </h3>
             
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="flex items-center gap-2 text-slate-600">
                 <Calendar className="w-3.5 h-3.5" />
                 <span>
-                  {primaryMatch.conversation.startedAt && 
-                    format(new Date(primaryMatch.conversation.startedAt), 'MMM d')}
-                  {primaryMatch.conversation.endedAt && 
-                    ` - ${format(new Date(primaryMatch.conversation.endedAt), 'MMM d, yyyy')}`}
+                  {match.conversation.startedAt && 
+                    format(new Date(match.conversation.startedAt), 'MMM d')}
+                  {match.conversation.endedAt && 
+                    ` - ${format(new Date(match.conversation.endedAt), 'MMM d, yyyy')}`}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-slate-600">
@@ -85,28 +88,25 @@ export const ContinuityModal: React.FC<ContinuityModalProps> = ({
             </div>
 
             <div className="mt-3 text-sm text-slate-500">
-              {primaryMatch.existingMessageCount} messages currently
+              {match.existingMessageCount} messages currently
             </div>
           </div>
 
           {/* Analysis */}
           <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-100">
-            <h4 className="font-medium text-indigo-800 mb-2 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" />
-              Analysis
+            <h4 className="font-medium text-indigo-800 mb-2">
+              What will happen
             </h4>
             <ul className="space-y-1 text-sm text-indigo-700">
-              {hasDuplicates && (
-                <li>• <strong>{primaryMatch.duplicateCount}</strong> message(s) already exist (will be skipped)</li>
-              )}
-              <li>• <strong>{newMessageCount}</strong> new message(s) will be added</li>
+              <li>• Messages up to the matched text will be <strong>skipped</strong> (already exist)</li>
+              <li>• <strong>{newMessageCount}</strong> new message{newMessageCount !== 1 ? 's' : ''} will be appended</li>
             </ul>
           </div>
 
           {/* Actions */}
           <div className="flex flex-col gap-2 pt-2">
             <button
-              onClick={() => onAppendToConversation(primaryMatch.conversation.id)}
+              onClick={onAppendToConversation}
               disabled={loading}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 font-medium"
             >
