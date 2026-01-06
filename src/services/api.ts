@@ -1270,7 +1270,6 @@ export const api = {
     topicCategorySlugs?: string[];
     agreementViolations: any[];
     messageAnnotations: any[];
-    userGuidance?: string;
   }): Promise<void> => {
     const { error } = await supabase.from('conversation_analyses').upsert({
       conversation_id: analysis.conversationId,
@@ -1279,9 +1278,17 @@ export const api = {
       key_topics: analysis.keyTopics,
       topic_category_slugs: analysis.topicCategorySlugs || [],
       agreement_violations: analysis.agreementViolations,
-      message_annotations: analysis.messageAnnotations,
-      user_guidance: analysis.userGuidance || null
+      message_annotations: analysis.messageAnnotations
     }, { onConflict: 'conversation_id,user_id' });
+    
+    if (error) throw error;
+  },
+
+  updateAnalysisSummary: async (conversationId: string, summary: string): Promise<void> => {
+    const { error } = await supabase
+      .from('conversation_analyses')
+      .update({ summary })
+      .eq('conversation_id', conversationId);
     
     if (error) throw error;
   },
@@ -1303,8 +1310,7 @@ export const api = {
       topicCategorySlugs: data.topic_category_slugs || [],
       agreementViolations: data.agreement_violations || [],
       messageAnnotations: data.message_annotations || [],
-      createdAt: data.created_at,
-      userGuidance: data.user_guidance || null
+      createdAt: data.created_at
     };
   },
 

@@ -11,3 +11,6 @@ verify_jwt = true
 
 [functions.analyze-conversation-import]
 verify_jwt = true
+
+[functions.amend-analysis-summary]
+verify_jwt = false
