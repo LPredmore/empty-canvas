@@ -338,34 +338,23 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
 
           {/* Actions */}
           <div className="pt-2 border-t border-border space-y-3">
-            {/* Display guidance used (if any) */}
-            {analysis.userGuidance && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <h5 className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1 flex items-center gap-1">
-                  <Search className="w-3 h-3" />
-                  Analysis investigated these concerns:
-                </h5>
-                <p className="text-sm text-blue-800 whitespace-pre-wrap">{analysis.userGuidance}</p>
-              </div>
-            )}
-            
             {/* Guidance input form */}
             {showGuidanceForm ? (
               <div className="bg-muted/50 rounded-lg p-3 space-y-3">
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
-                    What should the AI investigate more thoroughly?
+                    Describe what should be added or clarified:
                   </label>
                   <textarea
                     value={guidanceInput}
                     onChange={(e) => setGuidanceInput(e.target.value)}
-                    placeholder="e.g., I'm concerned about the pattern of deflection when I bring up the therapist's recommendations. Also, check if the electronics comment relates to the ongoing electronics issue..."
+                    placeholder="e.g., Please expand on the scheduling discussion from messages 3-5, or note that Luke showed flexibility about the pickup time"
                     rows={4}
                     className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground text-sm focus:ring-2 focus:ring-primary focus:border-primary resize-none"
                   />
                   <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
-                    The AI will investigate these areas but may conclude they are not supported by evidence.
+                    Only amendments supported by the conversation will be incorporated.
                   </p>
                 </div>
                 <div className="flex items-center justify-between">
@@ -392,7 +381,7 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
                     ) : (
                       <Search className="w-4 h-4" />
                     )}
-                    Analyze with Guidance
+                    Amend Summary
                   </button>
                 </div>
               </div>
@@ -408,7 +397,7 @@ export const ConversationAnalysisPanel: React.FC<ConversationAnalysisPanelProps>
                     className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground font-medium disabled:opacity-50"
                   >
                     <Search className="w-4 h-4" />
-                    Request Deeper Analysis
+                    Amend Summary
                   </button>
                   {onRefreshAnalysis && (
                     <button

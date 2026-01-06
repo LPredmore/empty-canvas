@@ -242,79 +242,102 @@ export const ConversationDetail: React.FC = () => {
     setRefreshingAnalysis(true);
     
     try {
-      // Get messages for analysis
-      const msgs = await api.getMessages(id);
-      const agreements = await api.getAllActiveAgreementItems();
-      const existingIssuesList = await api.getIssues();
-      
-      // Find "Me" person for context
-      const mePerson = people.find(p => p.role === 'me');
-      
-      // Call the analysis edge function
-      const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
-        body: {
-          conversationId: id,
-          messages: msgs.map(m => ({
+      // If user provided guidance, use the lightweight amendment function
+      if (userGuidance && userGuidance.trim()) {
+        const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('amend-analysis-summary', {
+          body: {
+            currentSummary: analysis?.summary || '',
+            userGuidance: userGuidance.trim(),
+            conversationMessages: messages.map(m => ({
+              senderName: people.find(p => p.id === m.senderId)?.fullName || 'Unknown',
+              body: m.rawText,
+              sentAt: m.sentAt
+            }))
+          }
+        });
+        
+        if (error) throw error;
+        
+        if (data) {
+          // Update only the summary in database
+          await api.updateAnalysisSummary(id, data);
+          // Refresh local state
+          setAnalysis(prev => prev ? { ...prev, summary: data } : null);
+        }
+      } else {
+        // Full analysis refresh - existing logic
+        const msgs = await api.getMessages(id);
+        const agreements = await api.getAllActiveAgreementItems();
+        const existingIssuesList = await api.getIssues();
+        
+        // Find "Me" person for context
+        const mePerson = people.find(p => p.role === 'me');
+        
+        // Call the analysis edge function
+        const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
+          body: {
+            conversationId: id,
+            messages: msgs.map(m => ({
+              id: m.id,
+              senderId: m.senderId,
+              receiverId: m.receiverId,
+              rawText: m.rawText,
+              sentAt: m.sentAt,
+              direction: m.direction
+            })),
+            participants: people.filter(p => conversation.participantIds.includes(p.id)).map(p => ({
+              id: p.id,
+              name: p.fullName,
+              role: p.role
+            })),
+            agreementItems: agreements.map(a => ({
+              id: a.id,
+              topic: a.topic,
+              fullText: a.fullText,
+              summary: a.summary || a.fullText.slice(0, 100)
+            })),
+            existingIssues: existingIssuesList.map(i => ({
+              id: i.id,
+              title: i.title,
+              description: i.description,
+              status: i.status,
+              priority: i.priority
+            })),
+            mePersonId: mePerson?.id,
+            isReanalysis: true
+          }
+        });
+        
+        if (error) throw error;
+        
+        if (data) {
+          const analysisResult = data as ConversationAnalysisResult;
+          
+          // Use shared processor for full processing (issues, contributions, profile notes)
+          await processAnalysisResults(id, analysisResult, msgs.map(m => ({
             id: m.id,
-            senderId: m.senderId,
+            senderId: m.senderId || '',
             receiverId: m.receiverId,
-            rawText: m.rawText,
-            sentAt: m.sentAt,
-            direction: m.direction
-          })),
-          participants: people.filter(p => conversation.participantIds.includes(p.id)).map(p => ({
-            id: p.id,
-            name: p.fullName,
-            role: p.role
-          })),
-          agreementItems: agreements.map(a => ({
-            id: a.id,
-            topic: a.topic,
-            fullText: a.fullText,
-            summary: a.summary || a.fullText.slice(0, 100)
-          })),
-          existingIssues: existingIssuesList.map(i => ({
-            id: i.id,
-            title: i.title,
-            description: i.description,
-            status: i.status,
-            priority: i.priority
-          })),
-          mePersonId: mePerson?.id,
-          isReanalysis: true,
-          userGuidance: userGuidance || undefined
+            rawText: m.rawText || '',
+            sentAt: m.sentAt || ''
+          })));
+          
+          // Update conversation state (resolution status)
+          if (analysisResult.conversationState) {
+            await updateConversationState(id, analysisResult.conversationState);
+          }
+          
+          // Build summary for feedback
+          const stats = buildAnalysisSummary(analysisResult);
+          console.log('Refresh analysis complete:', stats);
+          
+          // Reload the analysis and data
+          const newAnalysis = await api.getConversationAnalysis(id);
+          setAnalysis(newAnalysis);
+          
+          // Reload conversation to get updated status
+          loadData();
         }
-      });
-      
-      if (error) throw error;
-      
-      if (data) {
-        const analysisResult = data as ConversationAnalysisResult;
-        
-        // Use shared processor for full processing (issues, contributions, profile notes)
-        await processAnalysisResults(id, analysisResult, msgs.map(m => ({
-          id: m.id,
-          senderId: m.senderId || '',
-          receiverId: m.receiverId,
-          rawText: m.rawText || '',
-          sentAt: m.sentAt || ''
-        })), userGuidance);
-        
-        // Update conversation state (resolution status)
-        if (analysisResult.conversationState) {
-          await updateConversationState(id, analysisResult.conversationState);
-        }
-        
-        // Build summary for feedback
-        const stats = buildAnalysisSummary(analysisResult);
-        console.log('Refresh analysis complete:', stats);
-        
-        // Reload the analysis and data
-        const newAnalysis = await api.getConversationAnalysis(id);
-        setAnalysis(newAnalysis);
-        
-        // Reload conversation to get updated status
-        loadData();
       }
     } catch (e) {
       console.error('Failed to refresh analysis:', e);

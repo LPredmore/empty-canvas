@@ -8,8 +8,7 @@ import { ConversationAnalysisResult } from '../types/analysisTypes';
 export async function processAnalysisResults(
   conversationId: string,
   analysis: ConversationAnalysisResult,
-  savedMessages: Array<{ id: string; senderId: string; receiverId?: string; rawText: string; sentAt: string }>,
-  userGuidance?: string
+  savedMessages: Array<{ id: string; senderId: string; receiverId?: string; rawText: string; sentAt: string }>
 ): Promise<void> {
   // 1. Save conversation analysis
   if (analysis.conversationAnalysis) {
@@ -19,8 +18,7 @@ export async function processAnalysisResults(
       overallTone: analysis.conversationAnalysis.overallTone,
       keyTopics: analysis.conversationAnalysis.keyTopics || [],
       agreementViolations: analysis.agreementViolations || [],
-      messageAnnotations: analysis.messageAnnotations || [],
-      userGuidance
+      messageAnnotations: analysis.messageAnnotations || []
     });
   }
 

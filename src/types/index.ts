@@ -211,7 +211,6 @@ export interface ConversationAnalysis {
   agreementViolations: any[];
   messageAnnotations: any[];
   createdAt: string;
-  userGuidance?: string | null;
 }
 
 export interface RelatedConversationDiscovery {
