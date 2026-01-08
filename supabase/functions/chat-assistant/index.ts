@@ -22,6 +22,15 @@ const SYSTEM_PROMPTS = {
 When analyzing, cite specific evidence. When drafting, remove emotion and focus on facts.`,
 
   parseFile: `You are a data extraction specialist. Extract conversation data from the provided image or text.
+
+CRITICAL MESSAGE BOUNDARY RULES:
+- A new message ONLY starts when there is a clear new sender/author line or header
+- DO NOT split a single message into multiple messages based on paragraph breaks
+- DO NOT treat "Thank you", "Hello", "Hi", "Yes", "No", etc. at the start of a paragraph as a new message
+- Multiple paragraphs from the same sender in the same email/message = ONE message
+- Only create separate messages when you can clearly identify DIFFERENT senders or DIFFERENT timestamps/date headers
+- When in doubt, keep content as a single message rather than splitting
+
 Return a JSON object with this exact structure:
 {
   "title": "Brief descriptive title",
@@ -31,12 +40,12 @@ Return a JSON object with this exact structure:
     {
       "sender": "Name",
       "timestamp": "ISO date string or best estimate",
-      "text": "Message content"
+      "text": "Complete message content - include ALL paragraphs from this sender's message"
     }
   ],
   "startDate": "ISO date of first message"
 }
-Extract ALL messages visible. Preserve exact wording. Infer sourceType from formatting.`,
+Extract ALL messages visible. Preserve exact wording. Include all paragraphs per message. Infer sourceType from formatting.`,
 
   analyzePerson: `You are a forensic behavioral analyst specializing in high-conflict family dynamics.
 Provide a clinical assessment including:
