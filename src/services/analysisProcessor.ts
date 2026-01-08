@@ -28,27 +28,33 @@ export async function processAnalysisResults(
   for (const issueAction of (analysis.issueActions || [])) {
     try {
       if (issueAction.action === 'create') {
-        const newIssue = await api.createIssue({
+        // Use findOrCreate to prevent duplicates
+        const { issue: newIssue, isNew, matchType } = await api.findOrCreateIssue({
           title: issueAction.title,
           description: issueAction.description,
           priority: issueAction.priority as any,
           status: issueAction.status as any
         });
+        
         createdIssueIds[issueAction.title] = newIssue.id;
         
-        // Link people to the new issue - prefer personContributions, fallback to involvedPersonIds
+        if (!isNew) {
+          console.log(`Issue "${issueAction.title}" already exists (${matchType} match), linking instead of creating`);
+        }
+        
+        // Always link people (upsert handles duplicates)
         if (issueAction.personContributions && issueAction.personContributions.length > 0) {
           await api.linkPeopleToIssueWithContributions(newIssue.id, issueAction.personContributions);
         } else if (issueAction.involvedPersonIds && issueAction.involvedPersonIds.length > 0) {
           await api.linkPeopleToIssue(newIssue.id, issueAction.involvedPersonIds);
         }
         
-        // Link messages to the new issue
+        // Always link messages (idempotent)
         if (issueAction.linkedMessageIds?.length > 0) {
           await api.linkMessagesToIssue(issueAction.linkedMessageIds, newIssue.id);
         }
         
-        // Link conversation to issue
+        // Always link conversation (idempotent)
         await api.linkConversationToIssue(conversationId, newIssue.id, issueAction.reasoning);
         
       } else if (issueAction.action === 'update' && issueAction.issueId) {

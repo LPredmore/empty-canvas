@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { IssuePersonContribution } from '../types/analysisTypes';
 import { normalizeTextForMatching } from '../utils/textMatching';
+import { normalizeIssueTitle, titlesMatch } from '../utils/issueHelpers';
 
 // --- SYSTEM INSTRUCTIONS ---
 export const COPARENTING_ASSISTANT_INSTRUCTIONS = `
@@ -224,23 +225,97 @@ export const api = {
     };
   },
 
-  createIssue: async (issue: Partial<Issue>): Promise<Issue> => {
+  /**
+   * Find an existing issue by title (case-insensitive) or create a new one.
+   * This is the preferred method for idempotent issue creation.
+   */
+  findOrCreateIssue: async (issue: Partial<Issue>): Promise<{ 
+    issue: Issue; 
+    isNew: boolean;
+    matchType?: 'exact' | 'case_insensitive';
+  }> => {
+    const normalizedTitle = normalizeIssueTitle(issue.title || '');
+    
+    // Step 1: Try to find existing issue with case-insensitive match
+    const { data: allIssues } = await supabase
+      .from('issues')
+      .select('*');
+    
+    const existingMatch = (allIssues || []).find((existing: any) => 
+      titlesMatch(existing.title, normalizedTitle)
+    );
+    
+    if (existingMatch) {
+      return {
+        issue: {
+          id: existingMatch.id,
+          title: existingMatch.title,
+          description: existingMatch.description,
+          status: existingMatch.status,
+          priority: existingMatch.priority,
+          updatedAt: existingMatch.updated_at
+        },
+        isNew: false,
+        matchType: existingMatch.title === normalizedTitle ? 'exact' : 'case_insensitive'
+      };
+    }
+    
+    // Step 2: Create new issue with normalized title
     const { data, error } = await supabase.from('issues').insert({
-      title: issue.title,
+      title: normalizedTitle,
       description: issue.description,
       status: issue.status,
       priority: issue.priority
     }).select().single();
 
-    if (error) throw error;
+    if (error) {
+      // Handle race condition: unique constraint violation
+      if (error.code === '23505') {
+        // Another request created it simultaneously - fetch and return
+        const { data: raced } = await supabase
+          .from('issues')
+          .select('*')
+          .ilike('title', normalizedTitle)
+          .limit(1)
+          .maybeSingle();
+        
+        if (raced) {
+          return {
+            issue: {
+              id: raced.id,
+              title: raced.title,
+              description: raced.description,
+              status: raced.status,
+              priority: raced.priority,
+              updatedAt: raced.updated_at
+            },
+            isNew: false,
+            matchType: 'exact'
+          };
+        }
+      }
+      throw error;
+    }
+    
     return {
-      id: data.id,
-      title: data.title,
-      description: data.description,
-      status: data.status,
-      priority: data.priority,
-      updatedAt: data.updated_at
+      issue: {
+        id: data.id,
+        title: data.title,
+        description: data.description,
+        status: data.status,
+        priority: data.priority,
+        updatedAt: data.updated_at
+      },
+      isNew: true
     };
+  },
+
+  /**
+   * @deprecated Use findOrCreateIssue for idempotent issue creation
+   */
+  createIssue: async (issue: Partial<Issue>): Promise<Issue> => {
+    const result = await api.findOrCreateIssue(issue);
+    return result.issue;
   },
   
   updateIssue: async (id: string, updates: Partial<Issue>): Promise<void> => {
