@@ -8,6 +8,7 @@ import {
   TopicCategory, ConversationAnalysis, RelatedConversationDiscovery
 } from '../types';
 import { IssuePersonContribution } from '../types/analysisTypes';
+import { normalizeTextForMatching } from '../utils/textMatching';
 
 // --- SYSTEM INSTRUCTIONS ---
 export const COPARENTING_ASSISTANT_INSTRUCTIONS = `
@@ -1916,23 +1917,31 @@ export const api = {
       direction: string;
     }>,
     splicePointSentence: string
-  ): Promise<{ addedCount: number; skippedCount: number }> => {
+  ): Promise<{ addedCount: number; skippedCount: number; error?: string }> => {
     // Find where in the uploaded messages the splice point occurs
+    // Use robust normalization to handle smart quotes, dashes, etc.
     let spliceIndex = -1;
     
     for (let i = 0; i < allUploadedMessages.length; i++) {
-      const msgText = (allUploadedMessages[i].rawText || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const msgText = normalizeTextForMatching(allUploadedMessages[i].rawText || '');
       if (msgText.startsWith(splicePointSentence)) {
         spliceIndex = i;
         break;
       }
     }
     
-    // Take everything AFTER the splice point
-    const messagesToInsert = spliceIndex >= 0 
-      ? allUploadedMessages.slice(spliceIndex + 1)
-      : allUploadedMessages; // If no splice point found, insert all (fallback)
+    // CRITICAL: If splice point not found, abort to prevent duplicates
+    if (spliceIndex < 0) {
+      console.warn('Splice point not found - aborting append to prevent duplicates');
+      return { 
+        addedCount: 0, 
+        skippedCount: 0, 
+        error: 'splice_point_not_found' 
+      };
+    }
     
+    // Take everything AFTER the splice point
+    const messagesToInsert = allUploadedMessages.slice(spliceIndex + 1);
     const skippedCount = allUploadedMessages.length - messagesToInsert.length;
     
     if (messagesToInsert.length === 0) {

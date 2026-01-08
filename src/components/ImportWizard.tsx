@@ -6,7 +6,7 @@ import { Person, SourceType, MessageDirection, Role } from '../types';
 import { ConversationAnalysisResult, AnalysisSummary, DetectedAgreement } from '../types/analysisTypes';
 import { FirstSentenceMatch } from '../types/continuity';
 import { parseOFWExport, parseGenericText, parseGmailExport, ParsedConversation } from '../utils/parsers';
-import { extractFirstSentence } from '../utils/textMatching';
+import { extractFirstSentence, normalizeTextForMatching } from '../utils/textMatching';
 import { supabase } from '../lib/supabase';
 import { DetectedAgreementsReview } from './DetectedAgreementsReview';
 import { ContinuityModal } from './ContinuityModal';
@@ -117,7 +117,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                 const lastMsgSentence = extractFirstSentence(lastMsg.rawText);
                 let spliceIndex = -1;
                 for (let i = 0; i < sortedMessages.length; i++) {
-                  const msgText = sortedMessages[i].body.toLowerCase().replace(/\s+/g, ' ').trim();
+                  const msgText = normalizeTextForMatching(sortedMessages[i].body);
                   if (msgText.startsWith(lastMsgSentence)) {
                     spliceIndex = i;
                     break;
@@ -207,11 +207,20 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
       const splicePointSentence = extractFirstSentence(firstSentenceMatch.lastMessage.rawText);
       
       // Append using splice-point logic
-      const { addedCount, skippedCount } = await api.appendMessagesAfterSplicePoint(
+      const { addedCount, skippedCount, error } = await api.appendMessagesAfterSplicePoint(
         targetConversationId,
         allMessages,
         splicePointSentence
       );
+      
+      // Handle splice point not found - fall back to creating new conversation
+      if (error === 'splice_point_not_found') {
+        alert('Could not find the overlap point between conversations due to text formatting differences. Creating as a new conversation instead.');
+        setShowContinuityModal(false);
+        setAppendLoading(false);
+        setStep(2);
+        return;
+      }
       
       console.log(`Appended ${addedCount} messages, skipped ${skippedCount} (before splice point)`);
       
