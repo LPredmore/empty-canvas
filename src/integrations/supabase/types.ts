@@ -201,6 +201,59 @@ export type Database = {
         }
         Relationships: []
       }
+      analysis_runs: {
+        Row: {
+          completed_at: string | null
+          completed_stages: Json | null
+          conversation_id: string
+          created_at: string | null
+          current_stage: string | null
+          error_message: string | null
+          error_stage: string | null
+          id: string
+          stage_outputs: Json | null
+          started_at: string | null
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_stages?: Json | null
+          conversation_id: string
+          created_at?: string | null
+          current_stage?: string | null
+          error_message?: string | null
+          error_stage?: string | null
+          id?: string
+          stage_outputs?: Json | null
+          started_at?: string | null
+          status?: string
+          user_id?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          completed_stages?: Json | null
+          conversation_id?: string
+          created_at?: string | null
+          current_stage?: string | null
+          error_message?: string | null
+          error_stage?: string | null
+          id?: string
+          stage_outputs?: Json | null
+          started_at?: string | null
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analysis_runs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       assistant_messages: {
         Row: {
           assistant_session_id: string | null

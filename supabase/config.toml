@@ -14,3 +14,6 @@ verify_jwt = true
 
 [functions.amend-analysis-summary]
 verify_jwt = false
+
+[functions.analyze-conversation-pipeline]
+verify_jwt = true
