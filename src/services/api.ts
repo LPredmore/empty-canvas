@@ -2170,6 +2170,188 @@ export const api = {
       status: c.status || ConversationStatus.Open,
       pendingResponderId: c.pending_responder_id
     })) : [];
-  }
+  },
 
+  // === Analysis Run Management (for multi-stage pipeline) ===
+
+  /**
+   * Creates a new analysis run or returns existing incomplete run for resume.
+   * Also cleans up stale runs older than 1 hour.
+   */
+  createAnalysisRun: async (conversationId: string): Promise<{
+    id: string;
+    isResume: boolean;
+    resumeFromStage?: string;
+    priorOutputs?: Record<string, unknown>;
+  }> => {
+    // First, clean up any stale runs (older than 1 hour)
+    await supabase
+      .from('analysis_runs')
+      .update({ status: 'failed', error_message: 'Timed out' })
+      .eq('status', 'running')
+      .lt('started_at', new Date(Date.now() - 60 * 60 * 1000).toISOString());
+
+    // Check for existing incomplete run that can be resumed
+    const { data: existing } = await supabase
+      .from('analysis_runs')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .eq('status', 'failed')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing && (existing.completed_stages as string[] || []).length > 0) {
+      // Update to running for resume
+      await supabase
+        .from('analysis_runs')
+        .update({ status: 'running', error_message: null, error_stage: null })
+        .eq('id', existing.id);
+      
+      const completedStages = existing.completed_stages as string[] || [];
+      return {
+        id: existing.id,
+        isResume: true,
+        resumeFromStage: getNextAnalysisStage(completedStages),
+        priorOutputs: existing.stage_outputs as Record<string, unknown>
+      };
+    }
+
+    // Cancel any other pending/running runs for this conversation
+    await supabase
+      .from('analysis_runs')
+      .update({ status: 'cancelled' })
+      .eq('conversation_id', conversationId)
+      .in('status', ['pending', 'running']);
+
+    // Create new run
+    const { data, error } = await supabase
+      .from('analysis_runs')
+      .insert({ conversation_id: conversationId, status: 'running' })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { id: data.id, isResume: false };
+  },
+
+  /**
+   * Updates analysis run with completed stage and its output.
+   */
+  updateAnalysisRunStage: async (
+    runId: string, 
+    stage: string, 
+    output: unknown
+  ): Promise<void> => {
+    const { data: current } = await supabase
+      .from('analysis_runs')
+      .select('completed_stages, stage_outputs')
+      .eq('id', runId)
+      .single();
+
+    const completedStages = [...(current?.completed_stages as string[] || []), stage];
+    const stageOutputs = { 
+      ...(current?.stage_outputs as Record<string, unknown> || {}), 
+      [stage]: output 
+    };
+
+    await supabase
+      .from('analysis_runs')
+      .update({
+        current_stage: null,
+        completed_stages: completedStages,
+        stage_outputs: stageOutputs
+      })
+      .eq('id', runId);
+  },
+
+  /**
+   * Sets the current stage being processed.
+   */
+  setAnalysisRunCurrentStage: async (runId: string, stage: string): Promise<void> => {
+    await supabase
+      .from('analysis_runs')
+      .update({ current_stage: stage })
+      .eq('id', runId);
+  },
+
+  /**
+   * Marks analysis run as completed.
+   */
+  completeAnalysisRun: async (runId: string): Promise<void> => {
+    await supabase
+      .from('analysis_runs')
+      .update({ 
+        status: 'completed', 
+        current_stage: null,
+        completed_at: new Date().toISOString() 
+      })
+      .eq('id', runId);
+  },
+
+  /**
+   * Marks analysis run as failed with error details.
+   */
+  failAnalysisRun: async (runId: string, errorMessage: string, errorStage?: string): Promise<void> => {
+    await supabase
+      .from('analysis_runs')
+      .update({ 
+        status: 'failed', 
+        error_message: errorMessage,
+        error_stage: errorStage || null,
+        current_stage: null
+      })
+      .eq('id', runId);
+  },
+
+  /**
+   * Gets incomplete analysis run for a conversation (for resume UI).
+   */
+  getIncompleteAnalysisRun: async (conversationId: string): Promise<{
+    hasIncomplete: boolean;
+    runId?: string;
+    status?: string;
+    lastCompletedStage?: string;
+    completedStageCount?: number;
+    errorMessage?: string;
+  }> => {
+    const { data, error } = await supabase
+      .from('analysis_runs')
+      .select('id, status, completed_stages, error_message, error_stage')
+      .eq('conversation_id', conversationId)
+      .in('status', ['running', 'failed'])
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return { hasIncomplete: false };
+
+    const stages = data.completed_stages as string[] || [];
+    return {
+      hasIncomplete: true,
+      runId: data.id,
+      status: data.status,
+      lastCompletedStage: stages[stages.length - 1],
+      completedStageCount: stages.length,
+      errorMessage: data.error_message || undefined
+    };
+  }
 };
+
+// Helper function for stage ordering
+function getNextAnalysisStage(completedStages: string[]): string {
+  const allStages = [
+    'conversation_map',
+    'claims_verification', 
+    'issue_linking',
+    'issue_detection',
+    'agreement_checks',
+    'person_analysis',
+    'message_annotation',
+    'synthesis'
+  ];
+  
+  const lastCompleted = completedStages[completedStages.length - 1];
+  const lastIndex = allStages.indexOf(lastCompleted);
+  return allStages[lastIndex + 1] || allStages[0];
+}
