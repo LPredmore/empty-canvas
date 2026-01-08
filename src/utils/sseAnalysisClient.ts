@@ -27,7 +27,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
  * Handles connection, parsing SSE events, and invoking callbacks.
  */
 export async function runPipelineAnalysis(
-  requestBody: Record<string, unknown>,
+  requestBody: object,
   options: PipelineOptions
 ): Promise<void> {
   const { onProgress, onComplete, onError, signal, isMountedRef } = options;

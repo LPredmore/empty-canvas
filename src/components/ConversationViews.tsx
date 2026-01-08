@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { processAnalysisResults, updateConversationState, buildAnalysisSummary } from '../services/analysisProcessor';
@@ -8,6 +8,10 @@ import { Conversation, Message, Person, MessageDirection, Issue, ConversationSta
 import { format, isSameDay, isSameMonth, isSameYear, differenceInDays } from 'date-fns';
 import { Search, Filter, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User } from 'lucide-react';
 import { ConversationAnalysisPanel } from './ConversationAnalysisPanel';
+import { AnalysisProgressModal } from './AnalysisProgressModal';
+import { runPipelineAnalysis, AnalysisProgress } from '../utils/sseAnalysisClient';
+import { validateAndSanitizeAnalysisResult } from '../utils/analysisValidator';
+import { FEATURES } from '../config/features';
 
 const formatDateRange = (startedAt?: string, endedAt?: string): string => {
   if (!startedAt) return '';
@@ -209,13 +213,29 @@ export const ConversationDetail: React.FC = () => {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [refreshingAnalysis, setRefreshingAnalysis] = useState(false);
   
+  // SSE Pipeline State
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const isMountedRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
   // Tagging State
   const [taggingMsgId, setTaggingMsgId] = useState<string | null>(null);
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (!id) return;
     loadData();
+    return () => {
+      isMountedRef.current = false;
+      abortControllerRef.current?.abort();
+    };
   }, [id]);
+
+  const handleCancelAnalysis = () => {
+    abortControllerRef.current?.abort();
+    setRefreshingAnalysis(false);
+    setAnalysisProgress(null);
+  };
 
   const loadData = async () => {
     try {
@@ -285,33 +305,77 @@ export const ConversationDetail: React.FC = () => {
           { isReanalysis: true }
         );
         
-        const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
-          body: requestBody
-        });
-        
-        if (error) throw error;
-        
-        if (data) {
-          const analysisResult = data as ConversationAnalysisResult;
+        if (FEATURES.USE_ANALYSIS_PIPELINE) {
+          // SSE Pipeline path
+          abortControllerRef.current = new AbortController();
           
-          // Use shared processor for full processing (issues, contributions, profile notes)
-          await processAnalysisResults(id, analysisResult, messagesForAnalysis);
+          await new Promise<void>((resolve) => {
+            runPipelineAnalysis(requestBody, {
+              onProgress: (progress) => {
+                if (isMountedRef.current) {
+                  setAnalysisProgress(progress);
+                }
+              },
+              onComplete: async (rawResult) => {
+                if (!isMountedRef.current) return resolve();
+                
+                const { sanitized, warnings } = validateAndSanitizeAnalysisResult(rawResult);
+                if (warnings.length > 0) {
+                  console.warn('Analysis validation warnings:', warnings);
+                }
+                
+                await processAnalysisResults(id, sanitized, messagesForAnalysis);
+                
+                if (sanitized.conversationState) {
+                  await updateConversationState(id, sanitized.conversationState);
+                }
+                
+                const stats = buildAnalysisSummary(sanitized);
+                console.log('Refresh analysis complete:', stats);
+                
+                setAnalysisProgress(null);
+                loadData();
+                resolve();
+              },
+              onError: (error, stage) => {
+                console.error(`Refresh analysis failed at ${stage || 'unknown'}:`, error);
+                setAnalysisProgress(null);
+                resolve();
+              },
+              signal: abortControllerRef.current!.signal,
+              isMountedRef
+            });
+          });
+        } else {
+          // Legacy single-call path
+          const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
+            body: requestBody
+          });
           
-          // Update conversation state (resolution status)
-          if (analysisResult.conversationState) {
-            await updateConversationState(id, analysisResult.conversationState);
+          if (error) throw error;
+          
+          if (data) {
+            const analysisResult = data as ConversationAnalysisResult;
+            
+            // Use shared processor for full processing (issues, contributions, profile notes)
+            await processAnalysisResults(id, analysisResult, messagesForAnalysis);
+            
+            // Update conversation state (resolution status)
+            if (analysisResult.conversationState) {
+              await updateConversationState(id, analysisResult.conversationState);
+            }
+            
+            // Build summary for feedback
+            const stats = buildAnalysisSummary(analysisResult);
+            console.log('Refresh analysis complete:', stats);
+            
+            // Reload the analysis and data
+            const newAnalysis = await api.getConversationAnalysis(id);
+            setAnalysis(newAnalysis);
+            
+            // Reload conversation to get updated status
+            loadData();
           }
-          
-          // Build summary for feedback
-          const stats = buildAnalysisSummary(analysisResult);
-          console.log('Refresh analysis complete:', stats);
-          
-          // Reload the analysis and data
-          const newAnalysis = await api.getConversationAnalysis(id);
-          setAnalysis(newAnalysis);
-          
-          // Reload conversation to get updated status
-          loadData();
         }
       }
     } catch (e) {
@@ -527,6 +591,13 @@ export const ConversationDetail: React.FC = () => {
           </div>
         </div>
       )}
+      
+      {/* Analysis Progress Modal for SSE Pipeline */}
+      <AnalysisProgressModal
+        isOpen={refreshingAnalysis && FEATURES.USE_ANALYSIS_PIPELINE}
+        progress={analysisProgress}
+        onCancel={handleCancelAnalysis}
+      />
     </div>
   );
 };
