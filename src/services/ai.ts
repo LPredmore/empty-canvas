@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { api } from './api';
+import { processAnalysisResults, updateConversationState } from './analysisProcessor';
 import { 
   AssistantSenderType, 
   MessageDirection, 
@@ -397,114 +398,7 @@ function createTextStream(text: string): { stream: ReadableStream; error?: strin
   };
 }
 
-/**
- * Process analysis results from chat-based import (mirrors ImportWizard.processAnalysisResults)
- */
-async function processAnalysisResultsFromChat(
-  conversationId: string,
-  analysis: any,
-  existingPeople: Person[]
-) {
-  // 1. Save conversation analysis
-  if (analysis.conversationAnalysis) {
-    await api.saveConversationAnalysis({
-      conversationId,
-      summary: analysis.conversationAnalysis.summary,
-      overallTone: analysis.conversationAnalysis.overallTone,
-      keyTopics: analysis.conversationAnalysis.keyTopics || [],
-      agreementViolations: analysis.agreementViolations || [],
-      messageAnnotations: analysis.messageAnnotations || []
-    });
-  }
-
-  // 2. Process issue actions
-  for (const issueAction of (analysis.issueActions || [])) {
-    try {
-      if (issueAction.action === 'create') {
-        const newIssue = await api.createIssue({
-          title: issueAction.title,
-          description: issueAction.description,
-          priority: issueAction.priority,
-          status: issueAction.status
-        });
-        
-        if (issueAction.involvedPersonIds?.length > 0) {
-          await api.linkPeopleToIssue(newIssue.id, issueAction.involvedPersonIds);
-        }
-        if (issueAction.linkedMessageIds?.length > 0) {
-          await api.linkMessagesToIssue(issueAction.linkedMessageIds, newIssue.id);
-        }
-        await api.linkConversationToIssue(conversationId, newIssue.id, issueAction.reasoning);
-      } else if (issueAction.action === 'update' && issueAction.issueId) {
-        await api.updateIssue(issueAction.issueId, {
-          description: issueAction.description,
-          priority: issueAction.priority,
-          status: issueAction.status
-        });
-      }
-    } catch (err) {
-      console.error('Failed to process issue action:', err);
-    }
-  }
-
-  // 3. Process person analyses -> profile notes
-  for (const personAnalysis of (analysis.personAnalyses || [])) {
-    try {
-      let noteContent: string;
-      
-      // Handle NEW behavioral assessment format (preferred)
-      if (personAnalysis.behavioralAssessment?.summary) {
-        const ba = personAnalysis.behavioralAssessment;
-        noteContent = [
-          `## Behavioral Assessment`,
-          ba.summary,
-          '',
-          `**Interaction Quality:**`,
-          `- Cooperation: ${ba.cooperationLevel || 'N/A'}`,
-          `- Flexibility: ${ba.flexibilityLevel || 'N/A'}`,
-          `- Responsiveness: ${ba.responsivenessLevel || 'N/A'}`,
-          `- Accountability: ${ba.accountabilityLevel || 'N/A'}`,
-          `- Boundary Respect: ${ba.boundaryRespect || 'N/A'}`,
-          '',
-          personAnalysis.notablePatterns?.positive?.length 
-            ? `**Positive Patterns:** ${personAnalysis.notablePatterns.positive.join('; ')}`
-            : '',
-          personAnalysis.notablePatterns?.concerning?.length
-            ? `**Concerning Patterns:** ${personAnalysis.notablePatterns.concerning.join('; ')}`
-            : '',
-          personAnalysis.interactionRecommendations?.length
-            ? `**Recommendations:** ${personAnalysis.interactionRecommendations.join('; ')}`
-            : ''
-        ].filter(Boolean).join('\n');
-      } 
-      // Handle OLD clinical assessment format (backward compatibility)
-      else {
-        noteContent = [
-          `## Clinical Assessment`,
-          personAnalysis.clinicalAssessment?.summary || '',
-          '',
-          `**Communication Style:** ${personAnalysis.clinicalAssessment?.communicationStyle || 'N/A'}`,
-          `**Emotional Regulation:** ${personAnalysis.clinicalAssessment?.emotionalRegulation || 'N/A'}`,
-          `**Boundary Respect:** ${personAnalysis.clinicalAssessment?.boundaryRespect || 'N/A'}`,
-          `**Co-parenting Cooperation:** ${personAnalysis.clinicalAssessment?.coparentingCooperation || 'N/A'}`,
-          '',
-          `## Strategic Notes`,
-          `**Observations:** ${personAnalysis.strategicNotes?.observations?.join('; ') || 'None'}`,
-          `**Patterns:** ${personAnalysis.strategicNotes?.patterns?.join('; ') || 'None'}`,
-          `**Strategies:** ${personAnalysis.strategicNotes?.strategies?.join('; ') || 'None'}`
-        ].join('\n');
-      }
-
-      await api.createProfileNote({
-        personId: personAnalysis.personId,
-        type: 'observation',
-        content: noteContent
-      });
-    } catch (err) {
-      console.error('Failed to create profile note:', err);
-    }
-  }
-}
+// processAnalysisResultsFromChat has been removed - use shared processAnalysisResults from analysisProcessor.ts
 
 /**
  * Handle file import within chat (uses full analysis pipeline)
@@ -633,27 +527,15 @@ async function handleFileImportInChat(
       }
     });
     
-    // Step 6: Process analysis results
+    // Step 6: Process analysis results using shared processor
     let analysisSummary = '';
     if (!analysisError && analysisResult) {
-      await processAnalysisResultsFromChat(conversation.id, analysisResult, existingPeople);
+      // Use the same processor as ImportWizard and ConversationViews
+      await processAnalysisResults(conversation.id, analysisResult, formattedMessages);
       
-      // Persist conversation state (resolution status)
+      // Use the shared conversation state handler
       if (analysisResult.conversationState) {
-        const { status, pendingResponderName } = analysisResult.conversationState;
-        
-        // Resolve name to ID
-        let pendingResponderId: string | null = null;
-        if (pendingResponderName) {
-          const match = existingPeople.find(p => 
-            p.fullName.toLowerCase() === pendingResponderName.toLowerCase() ||
-            p.fullName.toLowerCase().includes(pendingResponderName.toLowerCase()) ||
-            pendingResponderName.toLowerCase().includes(p.fullName.toLowerCase())
-          );
-          pendingResponderId = match?.id || null;
-        }
-        
-        await api.updateConversationStatus(conversation.id, status, pendingResponderId);
+        await updateConversationState(conversation.id, analysisResult.conversationState);
       }
       
       const created = analysisResult.issueActions?.filter((a: any) => a.action === 'create').length || 0;
