@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { api } from './api';
 import { processAnalysisResults, updateConversationState } from './analysisProcessor';
+import { buildAnalysisRequest } from './analysisRequestBuilder';
 import { 
   AssistantSenderType, 
   MessageDirection, 
@@ -475,56 +476,22 @@ async function handleFileImportInChat(
       id: m.id,
       senderId: m.senderId || '',
       receiverId: m.receiverId,
-      rawText: m.rawText,
-      sentAt: m.sentAt
+      rawText: m.rawText || '',
+      sentAt: m.sentAt || ''
     }));
     
-    // Get context for analysis
-    const [agreementItems, existingIssues, relationships] = await Promise.all([
-      api.getAllActiveAgreementItems(),
-      api.getIssues(),
-      Promise.all(participantIds.map(id => api.getPersonRelationships(id)))
-    ]);
-    
-    const participants = participantIds.map((id, idx) => {
-      const person = existingPeople.find(p => p.id === id);
-      const personRelationships = relationships[idx] || [];
-      return {
-        id,
-        fullName: person?.fullName || 'Unknown',
-        role: person?.role || 'Other',
-        roleContext: person?.roleContext,
-        relationships: personRelationships.map(r => ({
-          relatedPersonId: r.relatedPersonId,
-          relatedPersonName: existingPeople.find(p => p.id === r.relatedPersonId)?.fullName || 'Unknown',
-          relationshipType: r.relationshipType
-        }))
-      };
-    });
-    
-    const mePerson = existingPeople.find(p => p.role === Role.Me);
+    // Use shared builder for consistent request format
+    const requestBody = await buildAnalysisRequest(
+      conversation.id,
+      formattedMessages,
+      participantIds,
+      existingPeople,
+      { isReanalysis: false }
+    );
     
     // Call analyze-conversation-import
     const { data: analysisResult, error: analysisError } = await supabase.functions.invoke('analyze-conversation-import', {
-      body: {
-        conversationId: conversation.id,
-        messages: formattedMessages,
-        participants,
-        agreementItems: agreementItems.map(item => ({
-          id: item.id,
-          topic: item.topic,
-          fullText: item.fullText,
-          summary: item.summary
-        })),
-        existingIssues: existingIssues.map(issue => ({
-          id: issue.id,
-          title: issue.title,
-          description: issue.description,
-          status: issue.status,
-          priority: issue.priority
-        })),
-        mePersonId: mePerson?.id || participantIds[0]
-      }
+      body: requestBody
     });
     
     // Step 6: Process analysis results using shared processor

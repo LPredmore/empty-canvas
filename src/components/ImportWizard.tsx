@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { parseFileWithAI } from '../services/ai';
 import { processAnalysisResults, updateConversationState, extractKeyFindings, buildAnalysisSummary } from '../services/analysisProcessor';
+import { buildAnalysisRequest, AnalysisMessage } from '../services/analysisRequestBuilder';
 import { Person, SourceType, MessageDirection, Role } from '../types';
 import { ConversationAnalysisResult, AnalysisSummary, DetectedAgreement } from '../types/analysisTypes';
 import { FirstSentenceMatch } from '../types/continuity';
@@ -243,7 +244,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
       const participantIds = conv?.participantIds || Object.values(nameToIdMap);
       
       // Run re-analysis on complete conversation
-      const summary = await runConversationAnalysis(
+      const result = await runConversationAnalysis(
         targetConversationId,
         messagesForAnalysis,
         participantIds,
@@ -252,9 +253,11 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
       
       setAnalysisLoading(false);
       
-      if (summary) {
-        setAnalysisSummary(summary);
-        if (detectedAgreements.length > 0) {
+      if (result) {
+        setAnalysisSummary(result.summary);
+        // Use the RETURNED value, not stale state
+        if (result.detectedAgreements.length > 0) {
+          setDetectedAgreements(result.detectedAgreements);
           setShowAgreementsReview(true);
         } else {
           setShowAnalysisSummary(true);
@@ -284,63 +287,31 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
     setFirstSentenceMatch(null);
   };
 
+  // Output type for runConversationAnalysis - returns both summary and detected agreements
+  interface AnalysisOutput {
+    summary: AnalysisSummary;
+    detectedAgreements: DetectedAgreement[];
+  }
+
   const runConversationAnalysis = async (
     conversationId: string,
-    savedMessages: Array<{ id: string; senderId: string; receiverId?: string; rawText: string; sentAt: string }>,
+    savedMessages: AnalysisMessage[],
     participantIds: string[],
     isReanalysis: boolean = false
-  ): Promise<AnalysisSummary | null> => {
+  ): Promise<AnalysisOutput | null> => {
     try {
-      // Fetch all context needed for analysis
-      const [agreementItems, existingIssues, relationships] = await Promise.all([
-        api.getAllActiveAgreementItems(),
-        api.getIssues(),
-        Promise.all(participantIds.map(id => api.getPersonRelationships(id)))
-      ]);
-
-      // Build participant data with relationships
-      const participants = participantIds.map((id, idx) => {
-        const person = existingPeople.find(p => p.id === id);
-        const personRelationships = relationships[idx] || [];
-        return {
-          id,
-          fullName: person?.fullName || 'Unknown',
-          role: person?.role || 'Other',
-          roleContext: person?.roleContext,
-          relationships: personRelationships.map(r => ({
-            relatedPersonId: r.relatedPersonId,
-            relatedPersonName: existingPeople.find(p => p.id === r.relatedPersonId)?.fullName || 'Unknown',
-            relationshipType: r.relationshipType
-          }))
-        };
-      });
-
-      // Find the "Me" person
-      const mePerson = existingPeople.find(p => p.role === Role.Me);
-      const mePersonId = mePerson?.id || participantIds[0];
+      // Use shared builder for consistent request format
+      const requestBody = await buildAnalysisRequest(
+        conversationId,
+        savedMessages,
+        participantIds,
+        existingPeople,
+        { isReanalysis }
+      );
 
       // Call the analysis edge function
       const { data, error } = await supabase.functions.invoke('analyze-conversation-import', {
-        body: {
-          conversationId,
-          messages: savedMessages,
-          participants,
-          agreementItems: agreementItems.map(item => ({
-            id: item.id,
-            topic: item.topic,
-            fullText: item.fullText,
-            summary: item.summary
-          })),
-          existingIssues: existingIssues.map(issue => ({
-            id: issue.id,
-            title: issue.title,
-            description: issue.description,
-            status: issue.status,
-            priority: issue.priority
-          })),
-          mePersonId,
-          isReanalysis
-        }
+        body: requestBody
       });
 
       if (error) {
@@ -358,11 +329,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         await updateConversationState(conversationId, analysisResult.conversationState);
       }
 
-      // Store detected agreements for review
+      // Extract detected agreements from result (don't set state here - return them)
       const detectedAgreementsFromAnalysis = analysisResult.detectedAgreements || [];
-      if (detectedAgreementsFromAnalysis.length > 0) {
-        setDetectedAgreements(detectedAgreementsFromAnalysis);
-      }
 
       // Build summary for user
       const stats = buildAnalysisSummary(analysisResult);
@@ -376,7 +344,11 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         agreementsDetected: stats.agreementsDetected
       };
 
-      return summary;
+      // Return both summary and detected agreements
+      return {
+        summary,
+        detectedAgreements: detectedAgreementsFromAnalysis
+      };
 
     } catch (error) {
       console.error('Analysis failed:', error);
@@ -456,7 +428,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         setAnalysisLoading(true);
 
         // 6. Run AI analysis
-        const summary = await runConversationAnalysis(
+        const result = await runConversationAnalysis(
           newConversation.id,
           messagesForAnalysis,
           finalPersonIds
@@ -465,10 +437,11 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         setAnalysisLoading(false);
         setSavedConversationId(newConversation.id);
 
-        if (summary) {
-          setAnalysisSummary(summary);
-          // If agreements were detected, show review first
-          if (detectedAgreements.length > 0) {
+        if (result) {
+          setAnalysisSummary(result.summary);
+          // Use the RETURNED detected agreements, not stale state
+          if (result.detectedAgreements.length > 0) {
+            setDetectedAgreements(result.detectedAgreements);
             setShowAgreementsReview(true);
           } else {
             setShowAnalysisSummary(true);
