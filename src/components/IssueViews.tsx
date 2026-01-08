@@ -16,6 +16,7 @@ export const IssueList: React.FC = () => {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [error, setError] = useState<{ type: 'duplicate' | 'unknown'; message: string; existingIssue?: Issue } | null>(null);
 
   // Create Form State
   const [title, setTitle] = useState('');
@@ -35,19 +36,38 @@ export const IssueList: React.FC = () => {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
+    setError(null);
+    
     try {
-      await api.createIssue({ 
+      const result = await api.findOrCreateIssue({ 
         title, 
         description: desc, 
         priority, 
         status: IssueStatus.Open 
       });
+      
+      if (!result.isNew) {
+        // Issue already exists - show helpful message
+        setError({
+          type: 'duplicate',
+          message: `An issue with this title already exists`,
+          existingIssue: result.issue
+        });
+        setCreating(false);
+        return;
+      }
+      
       setIsModalOpen(false);
       setTitle('');
       setDesc('');
+      setError(null);
       loadIssues();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setError({
+        type: 'unknown',
+        message: err.message || 'Failed to create issue. Please try again.'
+      });
     } finally {
       setCreating(false);
     }
@@ -122,6 +142,26 @@ export const IssueList: React.FC = () => {
                   {Object.values(IssuePriority).map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
+              
+              {error && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  error.type === 'duplicate' 
+                    ? 'bg-amber-50 border border-amber-200 text-amber-800' 
+                    : 'bg-red-50 border border-red-200 text-red-800'
+                }`}>
+                  <p className="font-medium">{error.message}</p>
+                  {error.type === 'duplicate' && error.existingIssue && (
+                    <Link 
+                      to={`/issues/${error.existingIssue.id}`}
+                      className="mt-2 inline-flex items-center gap-1 text-amber-700 hover:text-amber-900 underline"
+                      onClick={() => setIsModalOpen(false)}
+                    >
+                      View existing issue →
+                    </Link>
+                  )}
+                </div>
+              )}
+              
               <button type="submit" disabled={creating} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
                 {creating ? 'Saving...' : 'Create Issue'}
               </button>
