@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { processAnalysisResults, updateConversationState, buildAnalysisSummary } from '../services/analysisProcessor';
+import { buildAnalysisRequest } from '../services/analysisRequestBuilder';
 import { ConversationAnalysisResult } from '../types/analysisTypes';
-import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus, ConversationAnalysis } from '../types';
+import { Conversation, Message, Person, MessageDirection, Issue, ConversationStatus, ConversationAnalysis, Role } from '../types';
 import { format, isSameDay, isSameMonth, isSameYear, differenceInDays } from 'date-fns';
 import { Search, Filter, Loader2, Tag, AlertCircle, Clock, CheckCircle2, User } from 'lucide-react';
 import { ConversationAnalysisPanel } from './ConversationAnalysisPanel';
@@ -265,47 +266,27 @@ export const ConversationDetail: React.FC = () => {
           setAnalysis(prev => prev ? { ...prev, summary: data } : null);
         }
       } else {
-        // Full analysis refresh - existing logic
+        // Full analysis refresh - use shared builder for consistent request format
         const msgs = await api.getMessages(id);
-        const agreements = await api.getAllActiveAgreementItems();
-        const existingIssuesList = await api.getIssues();
+        const messagesForAnalysis = msgs.map(m => ({
+          id: m.id,
+          senderId: m.senderId || '',
+          receiverId: m.receiverId,
+          rawText: m.rawText || '',
+          sentAt: m.sentAt || ''
+        }));
         
-        // Find "Me" person for context
-        const mePerson = people.find(p => p.role === 'me');
+        // Use shared builder - fixes the name vs fullName bug and adds relationships/roleContext
+        const requestBody = await buildAnalysisRequest(
+          id,
+          messagesForAnalysis,
+          conversation.participantIds,
+          people,
+          { isReanalysis: true }
+        );
         
-        // Call the analysis edge function
         const { data, error } = await (await import('../lib/supabase')).supabase.functions.invoke('analyze-conversation-import', {
-          body: {
-            conversationId: id,
-            messages: msgs.map(m => ({
-              id: m.id,
-              senderId: m.senderId,
-              receiverId: m.receiverId,
-              rawText: m.rawText,
-              sentAt: m.sentAt,
-              direction: m.direction
-            })),
-            participants: people.filter(p => conversation.participantIds.includes(p.id)).map(p => ({
-              id: p.id,
-              name: p.fullName,
-              role: p.role
-            })),
-            agreementItems: agreements.map(a => ({
-              id: a.id,
-              topic: a.topic,
-              fullText: a.fullText,
-              summary: a.summary || a.fullText.slice(0, 100)
-            })),
-            existingIssues: existingIssuesList.map(i => ({
-              id: i.id,
-              title: i.title,
-              description: i.description,
-              status: i.status,
-              priority: i.priority
-            })),
-            mePersonId: mePerson?.id,
-            isReanalysis: true
-          }
+          body: requestBody
         });
         
         if (error) throw error;
@@ -314,13 +295,7 @@ export const ConversationDetail: React.FC = () => {
           const analysisResult = data as ConversationAnalysisResult;
           
           // Use shared processor for full processing (issues, contributions, profile notes)
-          await processAnalysisResults(id, analysisResult, msgs.map(m => ({
-            id: m.id,
-            senderId: m.senderId || '',
-            receiverId: m.receiverId,
-            rawText: m.rawText || '',
-            sentAt: m.sentAt || ''
-          })));
+          await processAnalysisResults(id, analysisResult, messagesForAnalysis);
           
           // Update conversation state (resolution status)
           if (analysisResult.conversationState) {
