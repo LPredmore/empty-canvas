@@ -13,8 +13,9 @@ export interface AnalysisProgress {
 
 export interface PipelineOptions {
   onProgress: (progress: AnalysisProgress) => void;
+  onStageComplete?: (stage: string, stageNumber: number, output: unknown) => void;
   onComplete: (result: ConversationAnalysisResult) => void;
-  onError: (error: string, stage?: string) => void;
+  onError: (error: string, stage?: string, partialOutputs?: Record<string, unknown>) => void;
   signal?: AbortSignal;
   isMountedRef?: MutableRefObject<boolean>;
 }
@@ -30,7 +31,7 @@ export async function runPipelineAnalysis(
   requestBody: object,
   options: PipelineOptions
 ): Promise<void> {
-  const { onProgress, onComplete, onError, signal, isMountedRef } = options;
+  const { onProgress, onStageComplete, onComplete, onError, signal, isMountedRef } = options;
   
   // Helper to check if component is still mounted
   const shouldContinue = () => !isMountedRef || isMountedRef.current;
@@ -102,7 +103,9 @@ export async function runPipelineAnalysis(
               break;
               
             case 'stage_complete':
-              // Could update progress to show completion, but we'll get stage_start for next
+              if (onStageComplete) {
+                onStageComplete(event.stage, event.stageNumber || 0, event.output);
+              }
               break;
               
             case 'complete':
@@ -111,7 +114,7 @@ export async function runPipelineAnalysis(
               
             case 'error':
             case 'stage_error':
-              onError(event.message, event.stage);
+              onError(event.message, event.stage, event.partialOutputs);
               return;
           }
         } catch (parseError) {

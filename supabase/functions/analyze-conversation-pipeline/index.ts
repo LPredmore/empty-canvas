@@ -120,7 +120,8 @@ serve(async (req) => {
               type: 'stage_error', 
               stage: stage.id, 
               message: stageError instanceof Error ? stageError.message : 'Stage failed',
-              completedStages: STAGES.slice(0, i).map(s => s.id)
+              completedStages: STAGES.slice(0, i).map(s => s.id),
+              partialOutputs: outputs  // Include partial outputs for recovery
             });
             controller.close();
             return;

@@ -1,7 +1,10 @@
 import { supabase } from '../lib/supabase';
 import { api } from './api';
-import { processAnalysisResults, updateConversationState } from './analysisProcessor';
+import { processAnalysisResults, updateConversationState, buildAnalysisSummary } from './analysisProcessor';
 import { buildAnalysisRequest } from './analysisRequestBuilder';
+import { FEATURES } from '../config/features';
+import { runPipelineAnalysis } from '../utils/sseAnalysisClient';
+import { validateAndSanitizeAnalysisResult } from '../utils/analysisValidator';
 import { 
   AssistantSenderType, 
   MessageDirection, 
@@ -489,27 +492,82 @@ async function handleFileImportInChat(
       { isReanalysis: false }
     );
     
-    // Call analyze-conversation-import
-    const { data: analysisResult, error: analysisError } = await supabase.functions.invoke('analyze-conversation-import', {
-      body: requestBody
-    });
-    
-    // Step 6: Process analysis results using shared processor
+    // Step 5: Run analysis pipeline
     let analysisSummary = '';
-    if (!analysisError && analysisResult) {
-      // Use the same processor as ImportWizard and ConversationViews
-      await processAnalysisResults(conversation.id, analysisResult, formattedMessages);
+    
+    if (FEATURES.USE_ANALYSIS_PIPELINE) {
+      // Use SSE pipeline for consistency with ImportWizard
+      const runInfo = await api.createAnalysisRun(conversation.id);
+      console.log(`Chat import: Analysis run ${runInfo.id}, isResume: ${runInfo.isResume}`);
       
-      // Use the shared conversation state handler
-      if (analysisResult.conversationState) {
-        await updateConversationState(conversation.id, analysisResult.conversationState);
+      const pipelineRequest = {
+        ...requestBody,
+        runId: runInfo.id,
+        resumeFromStage: runInfo.resumeFromStage,
+        priorOutputs: runInfo.priorOutputs
+      };
+      
+      await new Promise<void>((resolve) => {
+        runPipelineAnalysis(pipelineRequest, {
+          onProgress: async (progress) => {
+            console.log(`Chat import analysis: Stage ${progress.stageNumber}/${progress.totalStages} - ${progress.stageName}`);
+            await api.setAnalysisRunCurrentStage(runInfo.id, progress.stage);
+          },
+          onStageComplete: async (stage, _stageNumber, output) => {
+            await api.updateAnalysisRunStage(runInfo.id, stage, output);
+          },
+          onComplete: async (rawResult) => {
+            await api.completeAnalysisRun(runInfo.id);
+            
+            const { sanitized, warnings } = validateAndSanitizeAnalysisResult(rawResult);
+            if (warnings.length > 0) {
+              console.warn('Chat import analysis validation warnings:', warnings);
+            }
+            
+            await processAnalysisResults(conversation.id, sanitized, formattedMessages);
+            
+            if (sanitized.conversationState) {
+              await updateConversationState(conversation.id, sanitized.conversationState);
+            }
+            
+            const stats = buildAnalysisSummary(sanitized);
+            analysisSummary = `\n\nAnalysis complete:\n- Tone: ${sanitized.conversationAnalysis?.overallTone || 'neutral'}\n- Issues created: ${stats.issuesCreated}\n- Issues updated: ${stats.issuesUpdated}\n- Violations detected: ${stats.violationsDetected}`;
+            resolve();
+          },
+          onError: async (error, stage, partialOutputs) => {
+            console.error(`Chat import analysis failed at ${stage || 'unknown'}:`, error);
+            await api.failAnalysisRun(runInfo.id, error, stage);
+            
+            if (partialOutputs && Object.keys(partialOutputs).length > 0) {
+              for (const [stageName, output] of Object.entries(partialOutputs)) {
+                await api.updateAnalysisRunStage(runInfo.id, stageName, output);
+              }
+            }
+            
+            analysisSummary = `\n\nAnalysis partially complete (failed at ${stage || 'unknown'})`;
+            resolve();
+          }
+        });
+      });
+    } else {
+      // Legacy single-call path
+      const { data: analysisResult, error: analysisError } = await supabase.functions.invoke('analyze-conversation-import', {
+        body: requestBody
+      });
+      
+      if (!analysisError && analysisResult) {
+        await processAnalysisResults(conversation.id, analysisResult, formattedMessages);
+        
+        if (analysisResult.conversationState) {
+          await updateConversationState(conversation.id, analysisResult.conversationState);
+        }
+        
+        const created = analysisResult.issueActions?.filter((a: any) => a.action === 'create').length || 0;
+        const updated = analysisResult.issueActions?.filter((a: any) => a.action === 'update').length || 0;
+        const violations = analysisResult.agreementViolations?.length || 0;
+        
+        analysisSummary = `\n\nAnalysis complete:\n- Tone: ${analysisResult.conversationAnalysis?.overallTone || 'neutral'}\n- Issues created: ${created}\n- Issues updated: ${updated}\n- Violations detected: ${violations}`;
       }
-      
-      const created = analysisResult.issueActions?.filter((a: any) => a.action === 'create').length || 0;
-      const updated = analysisResult.issueActions?.filter((a: any) => a.action === 'update').length || 0;
-      const violations = analysisResult.agreementViolations?.length || 0;
-      
-      analysisSummary = `\n\nAnalysis complete:\n- Tone: ${analysisResult.conversationAnalysis?.overallTone || 'neutral'}\n- Issues created: ${created}\n- Issues updated: ${updated}\n- Violations detected: ${violations}`;
     }
     
     const successMessage = `Successfully imported "${conversation.title}" with ${parsed.messages.length} messages from ${participantMappings.map(m => m.person?.fullName).join(', ')}.${analysisSummary}`;
