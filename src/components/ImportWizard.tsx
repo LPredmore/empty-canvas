@@ -11,6 +11,10 @@ import { extractFirstSentence, normalizeTextForMatching } from '../utils/textMat
 import { supabase } from '../lib/supabase';
 import { DetectedAgreementsReview } from './DetectedAgreementsReview';
 import { ContinuityModal } from './ContinuityModal';
+import { AnalysisProgressModal } from './AnalysisProgressModal';
+import { runPipelineAnalysis, AnalysisProgress } from '../utils/sseAnalysisClient';
+import { validateAndSanitizeAnalysisResult } from '../utils/analysisValidator';
+import { FEATURES } from '../config/features';
 import { 
   X, Upload, Calendar, Users, ArrowRight, Save, Loader2, CheckCircle2, 
   FileText, Trash2, FileType, AlertTriangle, Brain, Shield, TrendingUp, Handshake
@@ -55,13 +59,29 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
   const [showContinuityModal, setShowContinuityModal] = useState(false);
   const [appendLoading, setAppendLoading] = useState(false);
   
+  // SSE Pipeline State
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const isMountedRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (isOpen) {
       api.getPeople().then(setExistingPeople);
     }
+    return () => {
+      isMountedRef.current = false;
+      abortControllerRef.current?.abort();
+    };
   }, [isOpen]);
+
+  const handleCancelAnalysis = () => {
+    abortControllerRef.current?.abort();
+    setAnalysisLoading(false);
+    setAnalysisProgress(null);
+  };
 
   const handleParse = async () => {
     setLoading(true);
@@ -309,47 +329,103 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
         { isReanalysis }
       );
 
-      // Call the analysis edge function
-      const { data, error } = await supabase.functions.invoke('analyze-conversation-import', {
-        body: requestBody
-      });
+      if (FEATURES.USE_ANALYSIS_PIPELINE) {
+        // SSE Pipeline path
+        abortControllerRef.current = new AbortController();
+        
+        return new Promise((resolve) => {
+          runPipelineAnalysis(requestBody, {
+            onProgress: (progress) => {
+              if (isMountedRef.current) {
+                setAnalysisProgress(progress);
+              }
+            },
+            onComplete: async (rawResult) => {
+              if (!isMountedRef.current) return resolve(null);
+              
+              // Validate and sanitize
+              const { sanitized, warnings } = validateAndSanitizeAnalysisResult(rawResult);
+              if (warnings.length > 0) {
+                console.warn('Analysis validation warnings:', warnings);
+              }
+              
+              // Process results
+              await processAnalysisResults(conversationId, sanitized, savedMessages);
+              
+              if (sanitized.conversationState) {
+                await updateConversationState(conversationId, sanitized.conversationState);
+              }
+              
+              setAnalysisProgress(null);
+              
+              // Build summary for user
+              const stats = buildAnalysisSummary(sanitized);
+              const summary: AnalysisSummary = {
+                conversationTone: sanitized.conversationAnalysis?.overallTone || 'neutral',
+                issuesCreated: stats.issuesCreated,
+                issuesUpdated: stats.issuesUpdated,
+                violationsDetected: stats.violationsDetected,
+                peopleAnalyzed: stats.peopleAnalyzed,
+                keyFindings: extractKeyFindings(sanitized),
+                agreementsDetected: stats.agreementsDetected
+              };
+              
+              resolve({
+                summary,
+                detectedAgreements: sanitized.detectedAgreements || []
+              });
+            },
+            onError: (error, stage) => {
+              console.error(`Analysis failed at ${stage || 'unknown'}:`, error);
+              setAnalysisProgress(null);
+              resolve(null);
+            },
+            signal: abortControllerRef.current.signal,
+            isMountedRef
+          });
+        });
+      } else {
+        // Legacy single-call path
+        const { data, error } = await supabase.functions.invoke('analyze-conversation-import', {
+          body: requestBody
+        });
 
-      if (error) {
-        console.error('Analysis error:', error);
-        return null;
+        if (error) {
+          console.error('Analysis error:', error);
+          return null;
+        }
+
+        const analysisResult = data as ConversationAnalysisResult;
+
+        // Process the analysis results (issues, profile notes, etc.)
+        await processAnalysisResults(conversationId, analysisResult, savedMessages);
+
+        // Persist conversation state (resolution status)
+        if (analysisResult.conversationState) {
+          await updateConversationState(conversationId, analysisResult.conversationState);
+        }
+
+        // Extract detected agreements from result (don't set state here - return them)
+        const detectedAgreementsFromAnalysis = analysisResult.detectedAgreements || [];
+
+        // Build summary for user
+        const stats = buildAnalysisSummary(analysisResult);
+        const summary: AnalysisSummary = {
+          conversationTone: analysisResult.conversationAnalysis?.overallTone || 'neutral',
+          issuesCreated: stats.issuesCreated,
+          issuesUpdated: stats.issuesUpdated,
+          violationsDetected: stats.violationsDetected,
+          peopleAnalyzed: stats.peopleAnalyzed,
+          keyFindings: extractKeyFindings(analysisResult),
+          agreementsDetected: stats.agreementsDetected
+        };
+
+        // Return both summary and detected agreements
+        return {
+          summary,
+          detectedAgreements: detectedAgreementsFromAnalysis
+        };
       }
-
-      const analysisResult = data as ConversationAnalysisResult;
-
-      // Process the analysis results (issues, profile notes, etc.)
-      await processAnalysisResults(conversationId, analysisResult, savedMessages);
-
-      // Persist conversation state (resolution status)
-      if (analysisResult.conversationState) {
-        await updateConversationState(conversationId, analysisResult.conversationState);
-      }
-
-      // Extract detected agreements from result (don't set state here - return them)
-      const detectedAgreementsFromAnalysis = analysisResult.detectedAgreements || [];
-
-      // Build summary for user
-      const stats = buildAnalysisSummary(analysisResult);
-      const summary: AnalysisSummary = {
-        conversationTone: analysisResult.conversationAnalysis?.overallTone || 'neutral',
-        issuesCreated: stats.issuesCreated,
-        issuesUpdated: stats.issuesUpdated,
-        violationsDetected: stats.violationsDetected,
-        peopleAnalyzed: stats.peopleAnalyzed,
-        keyFindings: extractKeyFindings(analysisResult),
-        agreementsDetected: stats.agreementsDetected
-      };
-
-      // Return both summary and detected agreements
-      return {
-        summary,
-        detectedAgreements: detectedAgreementsFromAnalysis
-      };
-
     } catch (error) {
       console.error('Analysis failed:', error);
       return null;
@@ -549,6 +625,16 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
 
   // Analysis loading overlay
   if (analysisLoading) {
+    if (FEATURES.USE_ANALYSIS_PIPELINE) {
+      return (
+        <AnalysisProgressModal
+          isOpen={true}
+          progress={analysisProgress}
+          onCancel={handleCancelAnalysis}
+        />
+      );
+    }
+    
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
         <div className="bg-white rounded-xl shadow-xl p-8 max-w-md text-center">
