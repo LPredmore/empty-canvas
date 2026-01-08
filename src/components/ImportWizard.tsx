@@ -330,18 +330,39 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
       );
 
       if (FEATURES.USE_ANALYSIS_PIPELINE) {
-        // SSE Pipeline path
+        // SSE Pipeline path with analysis run tracking
         abortControllerRef.current = new AbortController();
         
+        // Create or resume analysis run
+        const runInfo = await api.createAnalysisRun(conversationId);
+        console.log(`Analysis run ${runInfo.id}, isResume: ${runInfo.isResume}`);
+        
+        // Add resume info to request if applicable
+        const pipelineRequest = {
+          ...requestBody,
+          runId: runInfo.id,
+          resumeFromStage: runInfo.resumeFromStage,
+          priorOutputs: runInfo.priorOutputs
+        };
+        
         return new Promise((resolve) => {
-          runPipelineAnalysis(requestBody, {
-            onProgress: (progress) => {
+          runPipelineAnalysis(pipelineRequest, {
+            onProgress: async (progress) => {
               if (isMountedRef.current) {
                 setAnalysisProgress(progress);
+                // Track current stage in database
+                await api.setAnalysisRunCurrentStage(runInfo.id, progress.stage);
               }
+            },
+            onStageComplete: async (stage, _stageNumber, output) => {
+              // Save completed stage output for resume capability
+              await api.updateAnalysisRunStage(runInfo.id, stage, output);
             },
             onComplete: async (rawResult) => {
               if (!isMountedRef.current) return resolve(null);
+              
+              // Mark run as complete
+              await api.completeAnalysisRun(runInfo.id);
               
               // Validate and sanitize
               const { sanitized, warnings } = validateAndSanitizeAnalysisResult(rawResult);
@@ -375,8 +396,19 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, onS
                 detectedAgreements: sanitized.detectedAgreements || []
               });
             },
-            onError: (error, stage) => {
+            onError: async (error, stage, partialOutputs) => {
               console.error(`Analysis failed at ${stage || 'unknown'}:`, error);
+              
+              // Mark run as failed
+              await api.failAnalysisRun(runInfo.id, error, stage);
+              
+              // If we have partial outputs, save them for recovery
+              if (partialOutputs && Object.keys(partialOutputs).length > 0) {
+                for (const [stageName, output] of Object.entries(partialOutputs)) {
+                  await api.updateAnalysisRunStage(runInfo.id, stageName, output);
+                }
+              }
+              
               setAnalysisProgress(null);
               resolve(null);
             },

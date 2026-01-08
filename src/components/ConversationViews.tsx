@@ -218,6 +218,13 @@ export const ConversationDetail: React.FC = () => {
   const isMountedRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   
+  // Resume UI State
+  const [incompleteRun, setIncompleteRun] = useState<{
+    runId: string;
+    completedStageCount: number;
+    errorMessage?: string;
+  } | null>(null);
+  
   // Tagging State
   const [taggingMsgId, setTaggingMsgId] = useState<string | null>(null);
 
@@ -253,6 +260,20 @@ export const ConversationDetail: React.FC = () => {
       setIssues(i);
       setAnalysis(a);
       setLinkedIssues(links);
+      
+      // Check for incomplete analysis runs (for resume UI)
+      if (FEATURES.USE_ANALYSIS_PIPELINE) {
+        const runStatus = await api.getIncompleteAnalysisRun(id!);
+        if (runStatus.hasIncomplete && runStatus.completedStageCount && runStatus.completedStageCount > 0) {
+          setIncompleteRun({
+            runId: runStatus.runId!,
+            completedStageCount: runStatus.completedStageCount,
+            errorMessage: runStatus.errorMessage
+          });
+        } else {
+          setIncompleteRun(null);
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -306,18 +327,39 @@ export const ConversationDetail: React.FC = () => {
         );
         
         if (FEATURES.USE_ANALYSIS_PIPELINE) {
-          // SSE Pipeline path
+          // SSE Pipeline path with analysis run tracking
           abortControllerRef.current = new AbortController();
           
+          // Create or resume analysis run
+          const runInfo = await api.createAnalysisRun(id);
+          console.log(`Analysis run ${runInfo.id}, isResume: ${runInfo.isResume}`);
+          
+          // Clear incomplete run UI since we're starting
+          setIncompleteRun(null);
+          
+          // Add resume info to request if applicable
+          const pipelineRequest = {
+            ...requestBody,
+            runId: runInfo.id,
+            resumeFromStage: runInfo.resumeFromStage,
+            priorOutputs: runInfo.priorOutputs
+          };
+          
           await new Promise<void>((resolve) => {
-            runPipelineAnalysis(requestBody, {
-              onProgress: (progress) => {
+            runPipelineAnalysis(pipelineRequest, {
+              onProgress: async (progress) => {
                 if (isMountedRef.current) {
                   setAnalysisProgress(progress);
+                  await api.setAnalysisRunCurrentStage(runInfo.id, progress.stage);
                 }
+              },
+              onStageComplete: async (stage, _stageNumber, output) => {
+                await api.updateAnalysisRunStage(runInfo.id, stage, output);
               },
               onComplete: async (rawResult) => {
                 if (!isMountedRef.current) return resolve();
+                
+                await api.completeAnalysisRun(runInfo.id);
                 
                 const { sanitized, warnings } = validateAndSanitizeAnalysisResult(rawResult);
                 if (warnings.length > 0) {
@@ -337,9 +379,20 @@ export const ConversationDetail: React.FC = () => {
                 loadData();
                 resolve();
               },
-              onError: (error, stage) => {
+              onError: async (error, stage, partialOutputs) => {
                 console.error(`Refresh analysis failed at ${stage || 'unknown'}:`, error);
+                
+                await api.failAnalysisRun(runInfo.id, error, stage);
+                
+                // Save partial outputs for recovery
+                if (partialOutputs && Object.keys(partialOutputs).length > 0) {
+                  for (const [stageName, output] of Object.entries(partialOutputs)) {
+                    await api.updateAnalysisRunStage(runInfo.id, stageName, output);
+                  }
+                }
+                
                 setAnalysisProgress(null);
+                loadData(); // Reload to show resume banner
                 resolve();
               },
               signal: abortControllerRef.current!.signal,
@@ -485,6 +538,35 @@ export const ConversationDetail: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Resume Analysis Banner */}
+      {incompleteRun && !refreshingAnalysis && (
+        <div className="mx-4 mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600" />
+            <span className="text-sm text-amber-800">
+              Previous analysis stopped at stage {incompleteRun.completedStageCount} of 8.
+              {incompleteRun.errorMessage && (
+                <span className="text-amber-600 ml-1">({incompleteRun.errorMessage})</span>
+              )}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleRefreshAnalysis()}
+              className="px-3 py-1 text-sm font-medium text-amber-700 bg-amber-100 rounded hover:bg-amber-200 transition-colors"
+            >
+              Resume
+            </button>
+            <button
+              onClick={() => setIncompleteRun(null)}
+              className="px-3 py-1 text-sm font-medium text-slate-600 bg-slate-100 rounded hover:bg-slate-200 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Unified Scroll Container for Analysis + Messages */}
       <div className="flex-1 overflow-y-auto">
