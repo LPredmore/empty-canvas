@@ -29,6 +29,7 @@ import {
 } from '../utils/pdfExtractor';
 import { isPdfWorkerReady, getPdfWorkerDiagnostics } from '../utils/pdfjsInit';
 import type { ParsedConversation, ParsedMessage } from '../utils/parsers';
+import { deduplicateParsedMessages } from '../utils/messageDeduplication';
 
 // Re-export the parser types for external use
 export type { ParsedConversation, ParsedMessage };
@@ -128,7 +129,7 @@ export async function parseFileWithAI(file: File): Promise<ParsedConversation> {
   }
 
   // Convert AI response to ParsedConversation format matching parsers.ts
-  const messages: ParsedMessage[] = data.messages.map((m: any) => ({
+  const rawMessages: ParsedMessage[] = data.messages.map((m: any) => ({
     senderName: m.sender || 'Unknown',
     receiverName: 'Unknown',
     sentAt: new Date(m.timestamp || Date.now()),
@@ -136,6 +137,13 @@ export async function parseFileWithAI(file: File): Promise<ParsedConversation> {
     body: m.text || '',
     direction: MessageDirection.Inbound
   }));
+
+  // Run post-parse deduplication to catch AI parser errors (false message splits)
+  const { messages, mergedCount, warnings } = deduplicateParsedMessages(rawMessages);
+  
+  if (mergedCount > 0) {
+    console.warn(`[parseFileWithAI] Deduplication merged ${mergedCount} false message splits:`, warnings);
+  }
 
   const participants = new Set<string>(data.participants || []);
   const lastDate = messages.length > 0 
